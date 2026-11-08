@@ -35,7 +35,7 @@ From other sites only the recipe is kept: ingredients, method and tips, without 
 ## 3. Cooking with a recipe
 
 1. Click a recipe in the list on the left.
-2. Choose a view: **📄 Card (1:1)** (the recipe page), **🍲 Thermomix Mode (TM6)** or **🤖 Monsieur Cuisine Smart (MCS)**.
+2. Choose a view: **📄 Recipe card** (the recipe page), **🍲 Thermomix Mode (TM6)** or **🤖 Monsieur Cuisine Smart (MCS)**.
 3. Move between steps with **◀ PREVIOUS STEP** and **NEXT STEP ▶**.
 
 **What you see:** dials with time, temperature and speed, the ingredient list with the ones for the current step highlighted, and the step text. A recipe for one robot is converted for the other automatically.

@@ -6,9 +6,11 @@
 
 LocalChef Studio is a desktop app (Python, PyQt6) that keeps your recipes in an offline cookbook on your own computer and guides you through cooking step by step. It works with recipes for **Thermomix® TM6** and **Monsieur Cuisine Smart** and with hundreds of other recipe websites – the appliance and service names are used only to describe compatibility.
 
+> **Platform:** LocalChef Studio is written primarily for **Windows 10/11** – that is where it is developed and tested. The Docker version (Linux, NAS) is **experimental and has not been tested in everyday use**; only its build and start are checked automatically.
+
 ## Features
 
-- **Offline cookbook** – recipes saved with ingredients, steps, tips and a 1:1 copy of the page; works without internet.
+- **Offline cookbook** – saves the extracted ingredients, steps and tips and a local snapshot of the recipe page for personal offline viewing; works without internet.
 - **Search** – one start page searches your cookbook and recipe websites, by name or by ingredient.
 - **Cooking player** – large time / temperature / speed dials, highlighted ingredients for the current step, batch scaling, metric conversion and detailed steps.
 - **Conversion between appliances** – each recipe gets a version for both supported appliance types (built-in rules, optionally AI via Gemini); recipes from other websites are converted by an offline assistant.
@@ -24,6 +26,8 @@ Documentation: [user guide](docs/LocalChef_Studio_user_guide_EN.md) ([PDF](docs/
 
 Download **LocalChef_Studio_1.5.exe** from [Releases](https://github.com/johnpreclik/localchef-studio/releases/latest) and run it – a standard installer with a Start menu shortcut and an uninstaller. It installs for the current user into `%LOCALAPPDATA%\Programs\LocalChef Studio` (no administrator). The installer is not code-signed, so SmartScreen may ask: *More info → Run anyway*. Recipes and settings (`localchef_data`) survive updates and are not deleted on uninstall.
 
+Each release also has **LocalChef_Studio_1.5_python.zip** (run from Python or build your own .exe) and **LocalChef_Studio_1.5_docker.zip** (Docker files).
+
 ## Run with Python (3.10+, tested on 3.13 / Windows)
 
 ```
@@ -31,33 +35,50 @@ py -m pip install -r requirements.txt
 py localchef_studio_v1.5.py
 ```
 
-The version is part of the file name. Data (recipes, settings, logins) are stored in `localchef_data` next to the program; data from an older version are taken over automatically. This folder is never committed (see `.gitignore`) – it holds API keys, logins and saved recipes.
+The version is part of the file name. All data are stored locally in `localchef_data` next to the program: recipes, settings, API keys and the built-in browser's session data. Data from an older version are taken over automatically. This folder is never committed (see `.gitignore`) and should not be shared – it contains your API keys.
 
 ## Build a Windows .exe
 
-Run `build_exe.bat` – it creates `dist\LocalChefStudio\LocalChefStudio.exe` with all libraries (1–2 GB because of the offline translator).
-
-Release builds (exe + installer) are made by the [Windows installer](.github/workflows/windows-installer.yml) workflow: it runs `build_exe.bat`, starts the program, builds the Inno Setup installer (`installer/localchef_studio.iss`), test-installs and uninstalls it and publishes a GitHub release.
-
-## Docker
-
-The app runs on a virtual screen inside the container and is used from a web browser (noVNC on port **6080**); the phone app is on port **3665**.
-
-**Windows (Docker Desktop):** run `build_docker.bat` (`build_docker.bat noargos` leaves out the offline translator). It opens http://localhost:6080/.
-
-**NAS / Linux, e.g. TrueNAS SCALE 24.10+** – the image is built straight from GitHub. In the NAS shell (TrueNAS: *System → Shell*):
+Run `build_exe.bat` – it creates `dist\LocalChefStudio\LocalChefStudio.exe` with all libraries (1–2 GB because of the offline translator). The installer is then built with [Inno Setup](https://jrsoftware.org/isinfo.php):
 
 ```
-sudo docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
-sudo docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=NAS_IP -e VNC_PASSWORD=password -v /mnt/POOL/apps/localchef:/data/localchef_data localchef-studio
+iscc /DAppVersion=1.5 installer\localchef_studio.iss
 ```
 
-- `NAS_IP` = the NAS address on your network (used in the phone QR code), `POOL` = your pool name.
-- Set `VNC_PASSWORD` (max. 8 characters) – on a NAS port 6080 is reachable from the whole network.
-- Update: run `docker build` again, then `sudo docker rm -f localchef` and the same `docker run`. Data stay on your pool.
-- TrueNAS web UI alternative: *Apps → Discover → Custom App → Install via YAML* with [`docker-compose.yml`](docker-compose.yml) (edit the three marked values).
+The [Windows installer](.github/workflows/windows-installer.yml) workflow can do the same on GitHub (started by hand): it runs `build_exe.bat`, starts the program, builds the installer, test-installs and uninstalls it and can publish a GitHub release.
 
-The Docker build is checked automatically by the [Docker build](.github/workflows/docker-build.yml) workflow, which builds the image from GitHub with the same command, starts it and checks the app, noVNC and the phone server.
+## Docker (experimental)
+
+The app runs on a virtual screen inside the container and is used from a web browser (noVNC on port **6080**); the phone app is on port **3665**. The Docker version has not been tested in everyday use – please report any problems.
+
+### Linux – build straight from GitHub
+
+No need to download anything first; Docker fetches the source from GitHub itself:
+
+```
+docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
+docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=YOUR_PC_IP -e VNC_PASSWORD=password -v "$HOME/localchef_data:/data/localchef_data" localchef-studio
+```
+
+Then open http://localhost:6080/ in a browser.
+
+- `YOUR_PC_IP` = the computer's address on your network (used in the phone QR code), e.g. `192.168.1.10`.
+- Set `VNC_PASSWORD` (max. 8 characters) – port 6080 is reachable from the whole network.
+- Add `--build-arg WITH_ARGOS=0` to `docker build` to leave out the offline translator (the image is about 2 GB smaller).
+- Recipes and settings are kept in `~/localchef_data`.
+- Update: run `docker build` again, then `docker rm -f localchef` and the same `docker run`. Data stay in place.
+- Without internet access to GitHub: unpack `LocalChef_Studio_1.5_docker.zip` from Releases and run `docker build -t localchef-studio -f docker/Dockerfile .` inside it.
+- Use `sudo` before `docker` if your user is not in the `docker` group.
+
+### NAS, e.g. TrueNAS SCALE 24.10+
+
+The same two commands in the NAS shell (TrueNAS: *System → Shell*), with `sudo`, the NAS address in `LOCALCHEF_LAN_HOST` and data on your pool: `-v /mnt/POOL/apps/localchef:/data/localchef_data` (`POOL` = your pool name). Alternatively in the TrueNAS web UI: *Apps → Discover → Custom App → Install via YAML* with [`docker-compose.yml`](docker-compose.yml) (edit the three marked values).
+
+### Windows (Docker Desktop)
+
+Run `build_docker.bat` (`build_docker.bat noargos` leaves out the offline translator). It opens http://localhost:6080/.
+
+The [Docker build](.github/workflows/docker-build.yml) workflow builds the image from GitHub with the same command, starts it and checks that the app, noVNC and the phone server respond.
 
 ## Development
 

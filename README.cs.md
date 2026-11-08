@@ -6,9 +6,11 @@
 
 LocalChef Studio je aplikace pro počítač (Python, PyQt6), která uchovává recepty v offline kuchařce ve tvém počítači a provede tě vařením krok po kroku. Pracuje s recepty pro **Thermomix® TM6** a **Monsieur Cuisine Smart** i se stovkami dalších webů s recepty – názvy spotřebičů a služeb slouží jen k popisu kompatibility.
 
+> **Platforma:** LocalChef Studio je psané především pro **Windows 10/11** – tam se vyvíjí a testuje. Verze pro Docker (Linux, NAS) je **experimentální a v běžném provozu nebyla otestovaná**; automaticky se ověřuje jen její sestavení a spuštění.
+
 ## Funkce
 
-- **Offline kuchařka** – recepty se surovinami, kroky, tipy a kopií stránky 1:1; fungují bez internetu.
+- **Offline kuchařka** – uloží vytažené suroviny, kroky a tipy a místní snímek stránky receptu pro osobní prohlížení offline; funguje bez internetu.
 - **Hledání** – jedna úvodní stránka hledá v kuchařce i na webech s recepty, podle názvu nebo suroviny.
 - **Přehrávač vaření** – velké ciferníky čas / teplota / rychlost, zvýrazněné suroviny aktuálního kroku, přepočet dávky, metrické jednotky a jemné kroky.
 - **Převod mezi spotřebiči** – každý recept dostane verzi pro oba podporované typy (vestavěná pravidla, volitelně AI přes Gemini); recepty z ostatních webů převede offline asistent.
@@ -24,6 +26,8 @@ Dokumentace: [návod](docs/LocalChef_Studio_navod_CZ.md) ([PDF](docs/LocalChef_S
 
 Stáhni **LocalChef_Studio_1.5.exe** z [Releases](https://github.com/johnpreclik/localchef-studio/releases/latest) a spusť ho – klasický instalátor se zástupcem v nabídce Start a odinstalací. Instaluje se pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio` (bez administrátora). Instalátor není podepsaný, SmartScreen se proto může zeptat: *Další informace → Přesto spustit*. Recepty a nastavení (`localchef_data`) aktualizace zachová a odinstalace je nesmaže.
 
+Každé vydání má také **LocalChef_Studio_1.5_python.zip** (spuštění z Pythonu nebo sestavení vlastního exe) a **LocalChef_Studio_1.5_docker.zip** (soubory pro Docker).
+
 ## Spuštění z Pythonu (3.10+, testováno na 3.13 / Windows)
 
 ```
@@ -31,33 +35,50 @@ py -m pip install -r requirements.txt
 py localchef_studio_v1.5.py
 ```
 
-Verze je v názvu souboru. Data (recepty, nastavení, přihlášení) jsou ve složce `localchef_data` vedle programu; data ze starší verze se převezmou samy. Složka se do Gitu nikdy nenahrává (viz `.gitignore`) – obsahuje API klíče, přihlášení a uložené recepty.
+Verze je v názvu souboru. Všechna data jsou uložená místně ve složce `localchef_data` vedle programu: recepty, nastavení, API klíče a data relace vestavěného prohlížeče. Data ze starší verze se převezmou samy. Složka se do Gitu nikdy nenahrává (viz `.gitignore`) a nemá se sdílet – jsou v ní tvoje API klíče.
 
 ## Sestavení exe pro Windows
 
-Spusť `build_exe.bat` – vytvoří `dist\LocalChefStudio\LocalChefStudio.exe` se všemi knihovnami (1–2 GB kvůli offline překladači).
-
-Vydání (exe + instalátor) sestavuje workflow [Windows installer](.github/workflows/windows-installer.yml): spustí `build_exe.bat`, vyzkouší program, postaví instalátor Inno Setup (`installer/localchef_studio.iss`), zkušebně ho nainstaluje a odinstaluje a vytvoří GitHub Release.
-
-## Docker
-
-Aplikace běží na virtuální obrazovce v kontejneru a ovládá se z prohlížeče (noVNC na portu **6080**); aplikace pro telefon je na portu **3665**.
-
-**Windows (Docker Desktop):** spusť `build_docker.bat` (`build_docker.bat noargos` vynechá offline překladač). Otevře http://localhost:6080/.
-
-**NAS / Linux, např. TrueNAS SCALE 24.10+** – obraz se sestaví přímo z GitHubu. V shellu NASu (TrueNAS: *System → Shell*):
+Spusť `build_exe.bat` – vytvoří `dist\LocalChefStudio\LocalChefStudio.exe` se všemi knihovnami (1–2 GB kvůli offline překladači). Instalátor se pak sestaví programem [Inno Setup](https://jrsoftware.org/isinfo.php):
 
 ```
-sudo docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
-sudo docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=IP_NASU -e VNC_PASSWORD=heslo -v /mnt/POOL/apps/localchef:/data/localchef_data localchef-studio
+iscc /DAppVersion=1.5 installer\localchef_studio.iss
 ```
 
-- `IP_NASU` = adresa NASu v síti (pro QR kód v telefonu), `POOL` = název úložiště.
-- Nastav `VNC_PASSWORD` (max. 8 znaků) – na NASu je port 6080 vidět v celé síti.
-- Aktualizace: znovu `docker build`, pak `sudo docker rm -f localchef` a stejný `docker run`. Data zůstanou na úložišti.
-- Přes webové rozhraní TrueNAS: *Apps → Discover → Custom App → Install via YAML* se souborem [`docker-compose.yml`](docker-compose.yml) (uprav tři označené hodnoty).
+Totéž umí na GitHubu workflow [Windows installer](.github/workflows/windows-installer.yml) (spouští se ručně): spustí `build_exe.bat`, vyzkouší program, postaví instalátor, zkušebně ho nainstaluje a odinstaluje a může vytvořit GitHub Release.
 
-Sestavení Dockeru automaticky ověřuje workflow [Docker build](.github/workflows/docker-build.yml): obraz sestaví z GitHubu stejným příkazem, spustí ho a zkontroluje aplikaci, noVNC i server pro telefon.
+## Docker (experimentální)
+
+Aplikace běží na virtuální obrazovce v kontejneru a ovládá se z prohlížeče (noVNC na portu **6080**); aplikace pro telefon je na portu **3665**. Verze pro Docker nebyla otestovaná v běžném provozu – případné problémy prosím nahlas.
+
+### Linux – sestavení přímo z GitHubu
+
+Nic není potřeba předem stahovat, Docker si zdrojový kód vezme z GitHubu sám:
+
+```
+docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
+docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=IP_POCITACE -e VNC_PASSWORD=heslo -v "$HOME/localchef_data:/data/localchef_data" localchef-studio
+```
+
+Pak v prohlížeči otevři http://localhost:6080/.
+
+- `IP_POCITACE` = adresa počítače v síti (pro QR kód v telefonu), např. `192.168.1.10`.
+- Nastav `VNC_PASSWORD` (max. 8 znaků) – port 6080 je vidět v celé síti.
+- `--build-arg WITH_ARGOS=0` v příkazu `docker build` vynechá offline překladač (obraz je asi o 2 GB menší).
+- Recepty a nastavení zůstávají ve složce `~/localchef_data`.
+- Aktualizace: znovu `docker build`, pak `docker rm -f localchef` a stejný `docker run`. Data zůstanou.
+- Bez přístupu na GitHub: rozbal `LocalChef_Studio_1.5_docker.zip` z Releases a v jeho složce spusť `docker build -t localchef-studio -f docker/Dockerfile .`.
+- Když tvůj uživatel není ve skupině `docker`, dej před `docker` ještě `sudo`.
+
+### NAS, např. TrueNAS SCALE 24.10+
+
+Stejné dva příkazy v shellu NASu (TrueNAS: *System → Shell*), se `sudo`, adresou NASu v `LOCALCHEF_LAN_HOST` a daty na úložišti: `-v /mnt/POOL/apps/localchef:/data/localchef_data` (`POOL` = název úložiště). Nebo přes webové rozhraní TrueNAS: *Apps → Discover → Custom App → Install via YAML* se souborem [`docker-compose.yml`](docker-compose.yml) (uprav tři označené hodnoty).
+
+### Windows (Docker Desktop)
+
+Spusť `build_docker.bat` (`build_docker.bat noargos` vynechá offline překladač). Otevře http://localhost:6080/.
+
+Workflow [Docker build](.github/workflows/docker-build.yml) sestaví obraz z GitHubu stejným příkazem, spustí ho a ověří, že aplikace, noVNC i server pro telefon odpovídají.
 
 ## Vývoj
 
@@ -77,8 +98,6 @@ Knihovny třetích stran mají vlastní licence: PyQt6 a PyQt6-WebEngine GPL v3,
 
 ## Upozornění
 
-LocalChef Studio is an independent open-source project and is not affiliated with, endorsed by, or connected to Vorwerk (Thermomix / Cookidoo) or Lidl (Monsieur Cuisine). All trademarks belong to their respective owners.
-
-LocalChef Studio je nezávislý projekt a není spojený se společnostmi Vorwerk (Thermomix / Cookidoo) ani Lidl (Monsieur Cuisine), není jimi schválený ani podporovaný. Všechny ochranné známky patří jejich vlastníkům.
+LocalChef Studio je nezávislý open-source projekt a není spojený se společnostmi Vorwerk (Thermomix / Cookidoo) ani Lidl (Monsieur Cuisine), není jimi schválený ani podporovaný. Všechny ochranné známky patří jejich vlastníkům.
 
 Nástroj je určený pro vzdělávací účely a osobní potřebu. Neslouží k pirátství ani k obcházení předplatného či jiných omezení přístupu. Recepty, texty a fotografie patří jejich autorům a provozovatelům webů; ukládej jen recepty, ke kterým máš legální přístup, a dodržuj podmínky použití webů. Úplné znění je v [`DISCLAIMER.txt`](DISCLAIMER.txt).

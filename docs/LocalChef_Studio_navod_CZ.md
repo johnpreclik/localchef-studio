@@ -35,7 +35,7 @@ Z ostatních webů se uloží jen recept: suroviny, postup a tipy, bez reklam a 
 ## 3. Vaření podle receptu
 
 1. V seznamu vlevo klikněte na recept.
-2. Zvolte zobrazení: **📄 Karta (1:1)** (stránka receptu), **🍲 Režim Thermomix (TM6)** nebo **🤖 Monsieur Cuisine Smart (MCS)**.
+2. Zvolte zobrazení: **📄 Karta receptu** (stránka receptu), **🍲 Režim Thermomix (TM6)** nebo **🤖 Monsieur Cuisine Smart (MCS)**.
 3. Mezi kroky se posouváte tlačítky **◀ PŘEDCHOZÍ KROK** a **DALŠÍ KROK ▶**.
 
 **Co uvidíte:** ciferníky s časem, teplotou a rychlostí, seznam surovin se zvýrazněním toho, co patří do aktuálního kroku, a text kroku. Recept z jednoho robota se pro druhý převede sám.

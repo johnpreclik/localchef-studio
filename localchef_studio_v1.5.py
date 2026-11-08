@@ -183,7 +183,7 @@ UI_TEXTS = {
         "fav_btn_on": "💛 Odebrat z oblíbených",
         "fav_btn_off": "⭐ Přidat do oblíbených",
         "cat_btn": "🏷️ Změnit kategorii...",
-        "card_btn": "📄 Karta (1:1)",
+        "card_btn": "📄 Karta receptu",
         "tm_btn": "🍲 Režim Thermomix (TM6)",
         "mcs_btn": "🤖 Monsieur Cuisine Smart (MCS)",
         "pdf_btn": "🖨️ Export do PDF",
@@ -234,7 +234,7 @@ UI_TEXTS = {
         "fav_btn_on": "💛 Remove from Favorites",
         "fav_btn_off": "⭐ Add to Favorites",
         "cat_btn": "🏷️ Change Category...",
-        "card_btn": "📄 Card (1:1)",
+        "card_btn": "📄 Recipe card",
         "tm_btn": "🍲 Thermomix Mode (TM6)",
         "mcs_btn": "🤖 Monsieur Cuisine Smart (MCS)",
         "pdf_btn": "🖨️ Export to PDF",
@@ -375,7 +375,7 @@ EN_UI = {
         "⚠️ No translator is set up – enter a ✨ Gemini key in the desktop app or install argostranslate. Showing the original.",
     "❌ Překlad selhal: {err} – zobrazuji originál.": "❌ Translation failed: {err} – showing the original.",
     "⏳ Překládám… zatím zobrazuji originál, stránka se sama obnoví.": "⏳ Translating… showing the original for now, the page refreshes by itself.",
-    "Karta 1:1 není pro tento recept k dispozici.": "The 1:1 card is not available for this recipe.",
+    "Karta receptu není pro tento recept k dispozici.": "The recipe card is not available for this recipe.",
     "❌ Překlad karty se nepodařil": "❌ Translating the card failed",
     "🔄 Zkusit znovu": "🔄 Try again",
     "⏳ Překládám kartu do {lang}…": "⏳ Translating the card to {lang}…",
@@ -1923,7 +1923,7 @@ def fix_translated_units(text: str, lang: str) -> str:
 
 class RecipeTranslator:
     """Překládá po větách; každá věta se v receptu přeloží jen jednou (sdíleno mezi TM6/MCS verzí,
-    jemnými kroky i kartou 1:1) a výsledek se pamatuje v translation_cache.json ve složce receptu."""
+    jemnými kroky i kartou receptu) a výsledek se pamatuje v translation_cache.json ve složce receptu."""
 
     def __init__(self, folder: Path, target_lang: str, source_lang: str):
         self.path = folder / "translation_cache.json"
@@ -2684,7 +2684,7 @@ def _ld_people(v) -> list[str]:
 
 
 def trim_recipe_page(soup, recipe_ld: dict, ingredients: list[str], steps: list[str]) -> bool:
-    """Oholí uloženou stránku (kartu 1:1) na recept: titulek, hlavní obrázek, autor, popis, suroviny,
+    """Oholí uloženou stránku (kartu receptu) na recept: titulek, hlavní obrázek, autor, popis, suroviny,
     postup a tipy. Menu, reklamy, související články, diskuze a patička zmizí. <head> (styly) zůstává.
     Když recept na stránce nenajde, nechá ji celou a vrátí False."""
     if soup.body is None:
@@ -3521,7 +3521,7 @@ LAN_WEB_APP_HTML = """<!DOCTYPE html>
   <div id="card-view">
     <div class="card-switch">
       <button class="btn active" id="card-kind-sheet" onclick="setCardKind('sheet')" data-i18n="📱 Pro mobil">📱 Pro mobil</button>
-      <button class="btn" id="card-kind-orig" onclick="setCardKind('orig')" data-i18n="📄 Originál 1:1">📄 Originál 1:1</button>
+      <button class="btn" id="card-kind-orig" onclick="setCardKind('orig')" data-i18n="📄 Karta receptu">📄 Karta receptu</button>
     </div>
     <iframe id="card-iframe" src="about:blank"></iframe>
   </div>
@@ -3542,7 +3542,7 @@ const I18N_EN = {
   '🔄 Všechny stroje (Cookidoo + Monsieur Cuisine)': '🔄 All machines (Cookidoo + Monsieur Cuisine)',
   '🟢 Jen Cookidoo (Thermomix TM6)': '🟢 Cookidoo only (Thermomix TM6)', '🔵 Jen Monsieur Cuisine Smart': '🔵 Monsieur Cuisine Smart only',
   '🔍 Hledat recept...': '🔍 Search recipes...', '☰ Recepty': '☰ Recipes', 'Vyber recept': 'Select a recipe',
-  '📄 Karta (1:1)': '📄 Card (1:1)', '🔍 Jemné kroky': '🔍 Detailed steps',
+  '📄 Karta receptu': '📄 Recipe card', '🔍 Jemné kroky': '🔍 Detailed steps',
   '⏱️ ČAS': '⏱️ TIME', '🌡️ TEPLOTA': '🌡️ TEMP', '🔪 OTÁČKY': '🔪 SPEED', '🔪 RYCHLOST / PRG': '🔪 SPEED / PRG',
   'Vyber recept ze seznamu...': 'Pick a recipe from the list...',
   'Klikni na zelené tlačítko <b>☰ Recepty</b> vlevo nahoře a vyber si recept.': 'Tap the green <b>☰ Recipes</b> button at the top left and pick a recipe.',
@@ -3550,7 +3550,7 @@ const I18N_EN = {
   '⏳ Připravuji MCS verzi...': '⏳ Preparing the MCS version...', '⏳ Načítám...': '⏳ Loading...', '❌ Chyba načtení': '❌ Loading failed',
   'Zdroj': 'Source', 'KROK': 'STEP', 'Krok': 'Step', 'hl.': 'main', 'Z': 'OF', 'Žádné kroky.': 'No steps.',
   '🛒 Suroviny': '🛒 Ingredients', '🔄 Přeložit znovu': '🔄 Translate again',
-  'Krok 0/0': 'Step 0/0', '📄 Karta': '📄 Card', '📱 Pro mobil': '📱 Phone view', '📄 Originál 1:1': '📄 Original 1:1',
+  'Krok 0/0': 'Step 0/0', '📄 Karta': '📄 Card', '📱 Pro mobil': '📱 Phone view', '📄 Karta receptu': '📄 Recipe card',
   'Nic nenalezeno': 'Nothing found', '⚫ Jen ostatní weby': '⚫ Other sites only', '🔎 Hledat na webech': '🔎 Search the web'
 };
 function T(s){ return UI === 'en' ? (I18N_EN[s] || s) : s; }
@@ -3831,7 +3831,7 @@ loadCatalog();
 
 
 # ==========================================
-# SDÍLENÉ STYLY, PÍSMA A OBRÁZKY KARET 1:1 (localchef_data/web_assets)
+# SDÍLENÉ STYLY, PÍSMA A OBRÁZKY KARET RECEPTU (localchef_data/web_assets)
 # Každý soubor je uložený jen jednou – pod otiskem obsahu (hash), index.json mapuje adresu z webu → soubor.
 # ==========================================
 WEB_ASSETS_DIR = BASE_DIR / "web_assets"
@@ -4369,7 +4369,7 @@ SHEET_TXT = {
     "ingredients": ("Suroviny", "Ingredients"), "steps": ("Postup", "Method"), "tips": ("Tipy", "Tips"),
     "nutrition": ("Nutriční hodnoty", "Nutrition"), "per": ("na", "per"), "portions": ("Porce", "Servings"),
     "prep": ("Příprava", "Prep"), "total": ("Celkem", "Total"), "scale": ("Dávka", "Batch"),
-    "orig_card": ("Původní karta 1:1", "Original card 1:1"), "no_steps": ("Kroky nebyly nalezeny.", "No steps found."),
+    "orig_card": ("Karta receptu", "Recipe card"), "no_steps": ("Kroky nebyly nalezeny.", "No steps found."),
     "source": ("Zdroj", "Source"),
 }
 
@@ -5092,7 +5092,7 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
-                self.wfile.write(f"<h3>{tx('Karta 1:1 není pro tento recept k dispozici.')}</h3>".encode("utf-8"))
+                self.wfile.write(f"<h3>{tx('Karta receptu není pro tento recept k dispozici.')}</h3>".encode("utf-8"))
                 return
 
             raw_html = html_file.read_text(encoding="utf-8", errors="ignore")
@@ -5296,7 +5296,7 @@ def is_offline_card_url(url_str: str) -> bool:
 # ==========================================
 # ZÁLOHA RECEPTŮ (.7z): export vybraných receptů a jejich import – i na jiném počítači
 # Archiv: manifest.json + recipes/<složka receptu>/… + web_assets/<styly, písma, obrázky karet>
-#         + web_assets/index.part.json (adresa z webu → soubor), aby karta 1:1 fungovala i bez internetu.
+#         + web_assets/index.part.json (adresa z webu → soubor), aby karta receptu fungovala i bez internetu.
 # ==========================================
 try:
     import py7zr
@@ -5689,7 +5689,7 @@ HOW_TO_GUIDE = {
     "cs": [
         ("Co LocalChef Studio umí",
          "<p><b>LocalChef Studio</b> je offline kuchařka. Recepty z webu (Cookidoo pro Thermomix, Monsieur Cuisine a stovky dalších "
-         "webů s recepty) si uložíš do počítače a pak je máš i bez internetu: jako kartu stránky 1:1, jako PDF, v telefonu "
+         "webů s recepty) si uložíš do počítače a pak je máš i bez internetu: jako kartu receptu, jako PDF, v telefonu "
          "přes Wi-Fi a hlavně v <b>režimu vaření krok po kroku</b> pro Thermomix TM6 i Monsieur Cuisine. Recepty umí převést "
          "mezi oběma roboty, přeložit do češtiny a angličtiny a přepočítat na jiný počet porcí.</p>"),
         ("Rychlý start",
@@ -5709,7 +5709,7 @@ HOW_TO_GUIDE = {
          "(🟢 Cookidoo.cz), přihlášení vydrží i po restartu.</li>"
          "<li><b>Monsieur Cuisine</b> recepty jsou veřejné, ukládají se bez účtu.</li>"
          "<li><b>Ostatní weby</b> – najdi recept přes 🏠 Domů a ulož ho stejně. Aplikace z něj vezme jen recept: suroviny, "
-         "postup a tipy, karta 1:1 je očištěná od reklam a souvisejících článků (autor receptu zůstává). Stránky jen "
+         "postup a tipy, karta receptu je očištěná od reklam a souvisejících článků (autor receptu zůstává). Stránky jen "
          "s videem uložit nejde.</li>"
          "<li>Uložení stejného receptu znovu ho přepíše a smaže jeho staré převody a překlady – hodí se, když se něco "
          "uložilo špatně.</li></ul>"),
@@ -5723,7 +5723,7 @@ HOW_TO_GUIDE = {
          "<li>Víc receptů označíš <b>Ctrl + klik</b> (jednotlivě) nebo <b>Shift + klik</b> (rozsah); kliknutím na kategorii "
          "označíš všechny její recepty.</li></ul>"),
         ("Recept a režim vaření",
-         "<ul><li><b>📄 Karta (1:1)</b> – uložená stránka receptu, funguje bez internetu.</li>"
+         "<ul><li><b>📄 Karta receptu</b> – uložená stránka receptu, funguje bez internetu.</li>"
          "<li><b>🍲 Režim Thermomix (TM6)</b> a <b>🤖 Monsieur Cuisine Smart (MCS)</b> – kroky s časem, teplotou a "
          "rychlostí. Recept z jednoho robota se pro druhý převede sám (s klíčem Gemini přes umělou inteligenci, jinak "
          "offline pravidly). Recepty z ostatních webů převede offline asistent: kroky, které jdou dělat v robotu, dostanou "
@@ -5782,12 +5782,13 @@ HOW_TO_GUIDE = {
          "<ol><li>V seznamu vlevo označ recepty – <b>Ctrl + klik</b>, <b>Shift + klik</b> nebo klikni na celou kategorii.</li>"
          "<li>Pravé tlačítko → <b>📦 Exportovat zálohu (.7z)</b>, nebo tlačítko <b>📦 Exportovat označené</b> pod seznamem.</li>"
          "<li>Vyber, kam soubor uložit – výchozí je složka <code>localchef_data/exported_recipes</code>. Záloha obsahuje vše: "
-         "suroviny a kroky, překlady, převody pro TM6 i MCS a kartu 1:1 i s jejími styly a obrázky.</li></ol>"
+         "suroviny a kroky, překlady, převody pro TM6 i MCS a kartu receptu i s jejími styly a obrázky.</li></ol>"
          "<p><b>Import:</b> tlačítko <b>📥 Importovat recepty (.7z)</b> vlevo – vyber jeden nebo víc souborů .7z. Kategorie a "
          "oblíbené se zachovají. Když některý recept už v kuchařce máš, aplikace se zeptá: <b>Ano</b> = přepsat verzí ze "
          "zálohy (současná jde do koše <code>recipes_smazane</code>), <b>Ne</b> = ponechat současnou.</p>"
          "<p>⚠️ Recepty jsou chráněné autorským právem – zálohy jsou pro tvou vlastní potřebu, nešiř je hromadně.</p>"),
         ("Docker verze",
+         "<p><b>Experimentální:</b> aplikace je psaná hlavně pro Windows, verze pro Docker nebyla otestovaná v běžném provozu.</p>"
          "<p>LocalChef Studio jde spustit i v Dockeru (potřebuješ Docker Desktop). Dvojklik na <code>build_docker.bat</code> sestaví "
          "obraz (poprvé i desítky minut) a spustí ho. Aplikace se pak ovládá v prohlížeči na "
          "<a href='http://localhost:6080/'>http://localhost:6080/</a>, telefon se připojí přes QR kód jako obvykle (port 3665).</p>"
@@ -5806,7 +5807,7 @@ HOW_TO_GUIDE = {
     "en": [
         ("What LocalChef Studio does",
          "<p><b>LocalChef Studio</b> is an offline cookbook. Save recipes from the web (Cookidoo for Thermomix, Monsieur Cuisine and "
-         "hundreds of other recipe sites) to your computer and keep them without internet: as a 1:1 page card, as a PDF, on "
+         "hundreds of other recipe sites) to your computer and keep them without internet: as a recipe card, as a PDF, on "
          "your phone over Wi-Fi and above all in a <b>step-by-step cooking mode</b> for Thermomix TM6 and Monsieur Cuisine. "
          "It converts recipes between the two machines, translates them into Czech and English and scales them to other "
          "portions.</p>"),
@@ -5828,7 +5829,7 @@ HOW_TO_GUIDE = {
          "(🟢 Cookidoo.cz); the login survives restarts.</li>"
          "<li><b>Monsieur Cuisine</b> recipes are public and save without an account.</li>"
          "<li><b>Other sites</b> – find a recipe via 🏠 Home and save it the same way. Only the recipe is kept: ingredients, "
-         "method and tips; the 1:1 card is cleaned of ads and related articles (the recipe's author stays). Video-only "
+         "method and tips; the recipe card is cleaned of ads and related articles (the recipe's author stays). Video-only "
          "pages cannot be saved.</li>"
          "<li>Saving the same recipe again replaces it and removes its old conversions and translations – useful when "
          "something was saved wrong.</li></ul>"),
@@ -5842,7 +5843,7 @@ HOW_TO_GUIDE = {
          "<li>Select several recipes with <b>Ctrl + click</b> (one by one) or <b>Shift + click</b> (a range); clicking a category "
          "selects all its recipes.</li></ul>"),
         ("Recipe and cooking mode",
-         "<ul><li><b>📄 Card (1:1)</b> – the saved recipe page, works offline.</li>"
+         "<ul><li><b>📄 Recipe card</b> – the saved recipe page, works offline.</li>"
          "<li><b>🍲 Thermomix mode (TM6)</b> and <b>🤖 Monsieur Cuisine Smart (MCS)</b> – steps with time, temperature and "
          "speed. A recipe for one machine is converted for the other automatically (with a Gemini key by AI, otherwise by "
          "offline rules). Recipes from other sites are converted by the offline assistant: steps that can be done in the "
@@ -5903,12 +5904,13 @@ HOW_TO_GUIDE = {
          "<ol><li>Select recipes in the list on the left – <b>Ctrl + click</b>, <b>Shift + click</b> or click a whole category.</li>"
          "<li>Right-click → <b>📦 Export backup (.7z)</b>, or the <b>📦 Export selected</b> button below the list.</li>"
          "<li>Choose where to save the file – by default <code>localchef_data/exported_recipes</code>. The backup contains "
-         "everything: ingredients and steps, translations, TM6 and MCS conversions and the 1:1 card with its styles and images.</li></ol>"
+         "everything: ingredients and steps, translations, TM6 and MCS conversions and the recipe card with its styles and images.</li></ol>"
          "<p><b>Import:</b> the <b>📥 Import recipes (.7z)</b> button on the left – pick one or more .7z files. Categories and "
          "favourites are kept. If a recipe is already in your cookbook, the app asks: <b>Yes</b> = replace it with the backup "
          "version (the current one goes to the <code>recipes_smazane</code> trash), <b>No</b> = keep the current one.</p>"
          "<p>⚠️ Recipes are protected by copyright – backups are for your own use, do not distribute them widely.</p>"),
         ("Docker version",
+         "<p><b>Experimental:</b> the app is written mainly for Windows; the Docker version has not been tested in everyday use.</p>"
          "<p>LocalChef Studio can also run in Docker (you need Docker Desktop). Double-click <code>build_docker.bat</code>: it builds "
          "the image (the first time can take tens of minutes) and starts it. You then use the app in your browser at "
          "<a href='http://localhost:6080/'>http://localhost:6080/</a>; the phone connects via the QR code as usual (port 3665).</p>"
@@ -6233,7 +6235,7 @@ WIDGET_TOOLTIPS = {
     "act_ui_en": ("Rozhraní aplikace v angličtině", "App interface in English"),
     "btn_theme_toggle": ("Přepíná tmavý a světlý vzhled aplikace i karty receptu", "Switches between the dark and light look of the app and the recipe card"),
     "btn_icon_style": ("Styl ikon před recepty: barevné tečky, nebo hrnec/robot", "Icon style in front of recipes: coloured dots or pot/robot"),
-    "btn_view_card": ("Karta 1:1 – uložená stránka receptu, jak vypadá na webu (funguje i offline)", "Card 1:1 – the saved recipe page as it looks on the website (works offline)"),
+    "btn_view_card": ("Karta receptu – uložená stránka receptu, jak vypadá na webu (funguje i offline)", "Recipe card – the saved recipe page as it looks on the website (works offline)"),
     "btn_view_tm": ("Režim vaření pro Thermomix TM6 – krok po kroku s časem, teplotou a rychlostí", "Cooking mode for Thermomix TM6 – step by step with time, temperature and speed"),
     "btn_view_mcs": ("Režim vaření pro Monsieur Cuisine – recept se případně převede z TM6", "Cooking mode for Monsieur Cuisine – the recipe is converted from TM6 if needed"),
     "btn_card_orig": ("Zobrazí recept v původním jazyce", "Shows the recipe in its original language"),
@@ -7226,7 +7228,7 @@ class LocalChefStudio(QMainWindow):
         self.webpage.runJavaScript(js_fix)
 
     def _show_card(self, html_file: Path | None, lang: str = "orig"):
-        """Karta 1:1 přes vestavěný server (http://127.0.0.1) – styly a obrázky z webu se tak načtou
+        """Karta receptu přes vestavěný server (http://127.0.0.1) – styly a obrázky z webu se tak načtou
         v každé verzi Qt WebEngine (u file:// je to blokované). Server neběží → záložně soubor."""
         if LAN_STATE["ok"] and self.current_recipe_id:
             self.webview.setUrl(QUrl(local_card_url(self.current_recipe_id, lang)))
@@ -7615,7 +7617,7 @@ class LocalChefStudio(QMainWindow):
         for bad_el in soup.select(".search-overlay, .modal, #sliding-popup, .eu-cookie-compliance-banner, [role='alert'], [class*='toast'], [class*='notification']"):
             bad_el.decompose()
 
-        # Ostatní weby: karta 1:1 jen s receptem (bez menu, reklam, souvisejících článků a diskuze).
+        # Ostatní weby: karta receptu jen s receptem (bez menu, reklam, souvisejících článků a diskuze).
         # Cookidoo a MCS mají stránku receptu bez balastu a karta s ní počítá – tam se nic neořezává.
         if source_platform == "other":
             try:
@@ -7674,7 +7676,7 @@ class LocalChefStudio(QMainWindow):
         if source_platform == "other":
             recipe_payload["source_site"] = urllib.parse.urlparse(url_str).netloc.replace("www.", "")
         (folder / "recipe.json").write_text(json.dumps(recipe_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        schedule_page_assets(folder)          # styly, písma a obrázky karty 1:1 → sdílená složka web_assets
+        schedule_page_assets(folder)          # styly, písma a obrázky karty receptu → sdílená složka web_assets
 
         opposite_device = "tm6" if source_platform == "mcs" else "mcs"
         ensure_device_recipe_file(folder, opposite_device)
@@ -8454,7 +8456,7 @@ def _install_crash_guard():
 
 if __name__ == "__main__":
     _install_crash_guard()
-    start_web_assets_check()          # při startu ověří, jestli weby nezměnily styly karet 1:1
+    start_web_assets_check()          # při startu ověří, jestli weby nezměnily styly karet receptu
     app = QApplication(sys.argv)
     window = LocalChefStudio()
     window.show()

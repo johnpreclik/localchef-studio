@@ -43,7 +43,7 @@ print("backfill:", g["backfill_translated_titles"](), con.execute("SELECT title_
 
 # --- list receptu
 web = g["render_recipe_sheet"](f1, "en", None, "en", "web", 2.0, True, "/assets/x.jpg", "/api/card?id=r72374")
-for needle in ["[EN] Kulajda", "Ingredients", "Nutrition", "Energy", "1449 kJ / 346 kcal", "(per 1 porce)", "Tips", "[EN] Houby", "1000 g", "Servings", "Batch: 2×", "Original card 1:1", "/assets/x.jpg"]:
+for needle in ["[EN] Kulajda", "Ingredients", "Nutrition", "Energy", "1449 kJ / 346 kcal", "(per 1 porce)", "Tips", "[EN] Houby", "1000 g", "Servings", "Batch: 2×", "Recipe card", "/assets/x.jpg"]:
     print(f"web has {needle!r}:", needle in web)
 pdf = g["render_recipe_sheet"](f2, "orig", None, "cs", "pdf", 1.0, True, "cc-hero")
 for needle in ["Bacon-Medaillons", "Suroviny", "Nutriční hodnoty", "Energie", "520 kcal", "Bílkoviny", "Tipy", "Dazu passt", "cc-hero", "<ol>"]:
@@ -64,5 +64,5 @@ r = json.loads(get("/api/recipe?id=mcs_bacon&lang=orig&device=mcs&fine=0&ui=en")
 print("mcs dial time:", r["steps"][0]["dials"]["time"])
 h = get("/api/sheet?id=mcs_bacon&lang=en&ui=en")
 html = h.wfile.getvalue().decode()
-print("api/sheet:", h.st[:1], "Nutrition" in html, "[EN] Bacon" in html, "bacon.jpg" in html, "Original card 1:1" in html)
+print("api/sheet:", h.st[:1], "Nutrition" in html, "[EN] Bacon" in html, "bacon.jpg" in html, "Recipe card" in html)
 print("search_key:", g["search_key"]("Kulajda Svíčková ŘÍZEK"))

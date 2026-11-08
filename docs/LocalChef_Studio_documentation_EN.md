@@ -10,7 +10,7 @@ LocalChef Studio saves recipes from recipe websites into your own offline cookbo
 
 Main features at a glance:
 
-- **Offline cookbook** – a recipe is saved with a copy of the page (1:1 card), its ingredients and steps.
+- **Offline cookbook** – a recipe is saved with its ingredients and steps and a local snapshot of the page (recipe card) for personal offline viewing.
 - **Compatible websites** – recipes for Thermomix TM6 (Cookidoo), Monsieur Cuisine Smart (monsieur-cuisine.com) and hundreds of other recipe sites (Prima FRESH, Chefkoch, Allrecipes, BBC Good Food…).
 - **Search** – the 🏠 Home start page searches your cookbook and websites, by name or ingredient.
 - **Two robots** – every recipe has a version for Thermomix TM6 and Monsieur Cuisine Smart (MCS); the second one is created by automatic conversion. Recipes from other sites are converted by the offline assistant.
@@ -22,6 +22,8 @@ Main features at a glance:
 - **Built-in guide** – the ❓ How to use button (Czech and English).
 
 The app is a single file `localchef_studio_v1.5.py` (the version is in the name). It runs as a Python script (chapter 2), as a stand-alone `LocalChefStudio.exe` without Python (chapter 3), or in Docker, for example on a NAS (chapter 4). The interface is in Czech or English.
+
+**Platform:** the app is written primarily for **Windows 10/11**, where it is developed and tested. The Docker version is experimental and has not been tested in everyday use.
 
 Recipes are saved through the built-in browser. Everything else works with the data saved in the `localchef_data` folder, so it works offline. Internet is only needed for saving from the web, web search and online translators.
 
@@ -36,7 +38,7 @@ The app needs **Python 3.10 or newer** (developed and tested with Python 3.13 on
 | Library (pip) | Required | Purpose |
 |---|---|---|
 | PyQt6 | yes | app window, buttons, recipe list |
-| PyQt6-WebEngine | yes | built-in browser and the 1:1 card |
+| PyQt6-WebEngine | yes | built-in browser and the recipe card |
 | beautifulsoup4 | yes | reading recipes from saved pages |
 | argostranslate | no | offline translator without internet or keys (chapter 13) |
 | deepl | no | DeepL translator when you have its API key |
@@ -59,7 +61,7 @@ py localchef_studio_v1.5.py
 
 Start it from the folder where the data should live: `localchef_data` is created in the current command-line folder. On first start Windows may ask about network access – allow it for private networks, otherwise the phone app won't work (chapter 15).
 
-**Upgrading from an older version:** start the new version from the same folder. It takes over the old data folder on first start – recipes, settings and logins stay.
+**Upgrading from an older version:** start the new version from the same folder. It takes over the old data folder on first start – recipes and settings stay.
 
 ## 3. Stand-alone program (.exe)
 
@@ -79,9 +81,20 @@ The first build takes long (downloading libraries can take tens of minutes). Bec
 
 The app runs in Docker on a virtual screen inside the container and is used from a web browser through noVNC (port **6080**); the phone app runs on port **3665** as usual.
 
+> The Docker version is **experimental** and has not been tested in everyday use; only its build and start are checked automatically.
+
 **Windows (Docker Desktop):** run `build_docker.bat`. It builds the image, starts the `localchef` container and opens http://localhost:6080/. `build_docker.bat noargos` leaves out the offline translator (about 2 GB smaller). Container data live in `docker_data\localchef_data`, separate from the Windows version.
 
-**NAS / Linux (e.g. TrueNAS SCALE 24.10 and newer):** the image is built straight from GitHub. In the NAS shell (TrueNAS: System → Shell):
+**Linux:** the image is built straight from GitHub – nothing has to be downloaded first:
+
+```
+docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
+docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=YOUR_PC_IP -e VNC_PASSWORD=password -v "$HOME/localchef_data:/data/localchef_data" localchef-studio
+```
+
+Then open http://localhost:6080/. `YOUR_PC_IP` is the computer's address on your network (for the phone QR code). `--build-arg WITH_ARGOS=0` in `docker build` leaves out the offline translator. Use `sudo` before `docker` if your user is not in the `docker` group. Without access to GitHub, unpack `LocalChef_Studio_1.5_docker.zip` from Releases and run `docker build -t localchef-studio -f docker/Dockerfile .` inside it.
+
+**NAS (e.g. TrueNAS SCALE 24.10 and newer):** the same build from GitHub, in the NAS shell (TrueNAS: System → Shell):
 
 ```
 sudo docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
@@ -126,7 +139,7 @@ The window has the cookbook panel on the left and the work area on the right wit
 
 ### Recipe bar
 
-View: 📄 Card (1:1) / 🍲 Thermomix Mode (TM6) / 🤖 Monsieur Cuisine Smart (MCS), language 🌐 Original / 🇬🇧 English / 🇨🇿 Čeština, 🔄 Translate again and 🖨️ Export to PDF.
+View: 📄 Recipe card / 🍲 Thermomix Mode (TM6) / 🤖 Monsieur Cuisine Smart (MCS), language 🌐 Original / 🇬🇧 English / 🇨🇿 Čeština, 🔄 Translate again and 🖨️ Export to PDF.
 
 ### ⚙️ Settings menu
 
@@ -178,11 +191,11 @@ Saving the same recipe again replaces it with a fresh version and removes its ol
 
 ### Other sites
 
-Save recipes from other sites the same way (find them via 🏠 Home, for example). The app keeps **only the recipe**: ingredients, method and tips separately. The 1:1 card is cleaned of menus, ads, related articles and comments; the recipe's author stays. Video-only pages cannot be saved.
+Save recipes from other sites the same way (find them via 🏠 Home, for example). The app keeps **only the recipe**: ingredients, method and tips separately. The recipe card is cleaned of menus, ads, related articles and comments; the recipe's author stays. Video-only pages cannot be saved.
 
 ### What is saved
 
-- a copy of the page for the **1:1 card** (without scripts; styles, fonts and images are stored once in the shared `web_assets` folder),
+- a local snapshot of the page for the **recipe card** (without scripts; styles, fonts and images are stored once in the shared `web_assets` folder),
 - title, ingredients, steps and tips including machine settings,
 - data for **detailed steps** (chapter 11) – from the Monsieur Cuisine API or the Cookidoo page data,
 - the **version for the other robot** (chapter 12).
@@ -210,7 +223,7 @@ Each recipe belongs to one category. Default categories: Uncategorized, Monsieur
 
 ## 10. Viewing and cooking
 
-**📄 Card (1:1)** shows the recipe as it looked on the website, even offline. In dark mode the card is darkened; pictures keep their colours.
+**📄 Recipe card** shows the recipe as it looked on the website, even offline. In dark mode the card is darkened; pictures keep their colours.
 
 **🍲 Thermomix Mode (TM6)** and **🤖 Monsieur Cuisine Smart (MCS)** open the player for that robot. A recipe from another source is shown in its converted version (chapter 12).
 
@@ -318,10 +331,10 @@ All data live in the `localchef_data` folder – with the exe always next to `Lo
 | `app.log` | activity and error log |
 | `recipes/` | one subfolder per recipe |
 | `recipes_smazane/` | trash for deleted recipes |
-| `web_assets/` | shared styles, fonts and images of 1:1 cards |
+| `web_assets/` | shared styles, fonts and images of recipe cards |
 | `exported_recipes/` | default place for .7z backups |
 | `pdf_exports/` | default place for PDFs |
-| `browser_profile/` | website logins |
+| `browser_profile/` | session data of the built-in browser (cookies) |
 | `browser_cache/` | temporary browser cache (can be deleted) |
 | `argos_packages/` | offline translator language models (exe only) |
 
@@ -339,7 +352,7 @@ The database remembers the full path of each recipe folder. If the folder is not
 2. Right-click → **📦 Export backup (.7z)**, or the **📦 Export selected** button below the list.
 3. Choose where to save the file (default `localchef_data/exported_recipes`).
 
-The backup contains everything: ingredients and steps, translations, conversions for both robots and the 1:1 card with its styles and images, so the card works on another computer even offline.
+The backup contains everything: ingredients and steps, translations, conversions for both robots and the recipe card with its styles and images, so the card works on another computer even offline.
 
 ### Import
 

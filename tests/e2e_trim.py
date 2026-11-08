@@ -1,4 +1,4 @@
-"""Ostatní weby (vzor Prima FRESH): postup bez balastu stránky, tipy zvlášť, karta 1:1 oříznutá na recept."""
+"""Ostatní weby (vzor Prima FRESH): postup bez balastu stránky, tipy zvlášť, karta receptu oříznutá na recept."""
 import sys, os, json
 sys.path.insert(0, os.path.dirname(__file__))
 import fakeqt; fakeqt.install()

@@ -10,7 +10,7 @@ LocalChef Studio ukládá recepty z webů s recepty do vlastní offline kuchařk
 
 Hlavní funkce v kostce:
 
-- **Offline kuchařka** – recept se uloží do počítače i s kopií stránky (karta 1:1), surovinami a kroky.
+- **Offline kuchařka** – recept se uloží do počítače se surovinami a kroky a s místním snímkem stránky (karta receptu) pro osobní prohlížení offline.
 - **Kompatibilní weby** – recepty pro Thermomix TM6 (Cookidoo), Monsieur Cuisine Smart (monsieur-cuisine.com) a stovky dalších webů s recepty (Prima FRESH, Chefkoch, Allrecipes, BBC Good Food…).
 - **Hledání** – úvodní stránka 🏠 Domů hledá ve vlastní kuchařce i na webech, podle názvu nebo suroviny.
 - **Dva roboty** – každý recept má verzi pro Thermomix TM6 i Monsieur Cuisine Smart (MCS); druhá vzniká automatickým převodem. Recepty z ostatních webů převede offline asistent.
@@ -22,6 +22,8 @@ Hlavní funkce v kostce:
 - **Návod v aplikaci** – tlačítko ❓ Návod (česky i anglicky).
 
 Aplikace je jeden soubor `localchef_studio_v1.5.py` (číslo verze je v názvu). Spustit se dá jako Python skript (kapitola 2), jako samostatný program `LocalChefStudio.exe` bez Pythonu (kapitola 3), nebo v Dockeru, třeba na NASu (kapitola 4). Rozhraní je česky nebo anglicky.
+
+**Platforma:** aplikace je psaná především pro **Windows 10/11**, kde se vyvíjí a testuje. Verze pro Docker je experimentální a v běžném provozu nebyla otestovaná.
 
 Recepty se ukládají přes vestavěný prohlížeč. Všechno ostatní pracuje s uloženými daty ve složce `localchef_data`, takže funguje i bez internetu. Internet potřebují jen ukládání z webu, hledání na webech a online překladače.
 
@@ -36,7 +38,7 @@ Aplikace potřebuje **Python 3.10 nebo novější** (vyvíjena a testována na P
 | Knihovna (pip) | Povinná | K čemu slouží |
 |---|---|---|
 | PyQt6 | ano | okno aplikace, tlačítka, seznam receptů |
-| PyQt6-WebEngine | ano | vestavěný prohlížeč a karta 1:1 |
+| PyQt6-WebEngine | ano | vestavěný prohlížeč a karta receptu |
 | beautifulsoup4 | ano | čtení receptů z uložených stránek |
 | argostranslate | ne | offline překladač bez internetu a bez klíčů (kapitola 13) |
 | deepl | ne | překladač DeepL, když máš jeho API klíč |
@@ -59,7 +61,7 @@ py localchef_studio_v1.5.py
 
 Spouštěj ze složky, kde mají být data: složka `localchef_data` se vytváří v aktuální složce příkazového řádku. Při prvním spuštění se Windows může zeptat na síťový přístup – povol ho pro soukromou síť, jinak nepůjde aplikace v telefonu (kapitola 15).
 
-**Přechod ze starší verze:** spusť novou verzi ze stejné složky. Při prvním startu převezme starou datovou složku – recepty, nastavení i přihlášení zůstanou.
+**Přechod ze starší verze:** spusť novou verzi ze stejné složky. Při prvním startu převezme starou datovou složku – recepty i nastavení zůstanou.
 
 ## 3. Samostatný program (.exe)
 
@@ -79,9 +81,20 @@ První sestavení trvá dlouho (stahování knihoven i desítky minut). Výsledn
 
 Aplikace jde spustit v Dockeru. Běží na virtuální obrazovce v kontejneru a ovládá se z prohlížeče přes noVNC (port **6080**); aplikace pro telefon běží na portu **3665** jako obvykle.
 
+> Verze pro Docker je **experimentální** a v běžném provozu nebyla otestovaná; automaticky se ověřuje jen její sestavení a spuštění.
+
 **Windows (Docker Desktop):** spusť `build_docker.bat`. Sestaví obraz, spustí kontejner `localchef` a otevře http://localhost:6080/. `build_docker.bat noargos` vynechá offline překladač (obraz je asi o 2 GB menší). Data kontejneru jsou v `docker_data\localchef_data`, oddělená od Windows verze.
 
-**NAS / Linux (např. TrueNAS SCALE 24.10 a novější):** obraz se sestaví přímo z GitHubu, bez stahování zdrojáků ručně. V shellu NASu (TrueNAS: System → Shell):
+**Linux:** obraz se sestaví přímo z GitHubu – nic není potřeba předem stahovat:
+
+```
+docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
+docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=IP_POCITACE -e VNC_PASSWORD=heslo -v "$HOME/localchef_data:/data/localchef_data" localchef-studio
+```
+
+Pak otevři http://localhost:6080/. `IP_POCITACE` je adresa počítače v síti (pro QR kód v telefonu). `--build-arg WITH_ARGOS=0` v `docker build` vynechá offline překladač. Když tvůj uživatel není ve skupině `docker`, dej před `docker` ještě `sudo`. Bez přístupu na GitHub rozbal `LocalChef_Studio_1.5_docker.zip` z Releases a v jeho složce spusť `docker build -t localchef-studio -f docker/Dockerfile .`.
+
+**NAS (např. TrueNAS SCALE 24.10 a novější):** stejné sestavení z GitHubu, v shellu NASu (TrueNAS: System → Shell):
 
 ```
 sudo docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpreclik/localchef-studio.git#main
@@ -126,7 +139,7 @@ Okno má vlevo panel s kuchařkou a vpravo pracovní plochu s horní lištou, li
 
 ### Lišta receptu
 
-Zobrazit: 📄 Karta (1:1) / 🍲 Režim Thermomix (TM6) / 🤖 Monsieur Cuisine Smart (MCS), jazyk 🌐 Originál / 🇬🇧 English / 🇨🇿 Čeština, 🔄 Přeložit znovu a 🖨️ Export do PDF.
+Zobrazit: 📄 Karta receptu / 🍲 Režim Thermomix (TM6) / 🤖 Monsieur Cuisine Smart (MCS), jazyk 🌐 Originál / 🇬🇧 English / 🇨🇿 Čeština, 🔄 Přeložit znovu a 🖨️ Export do PDF.
 
 ### Menu ⚙️ Nastavení
 
@@ -178,11 +191,11 @@ Uložením stejného receptu znovu se recept přepíše čerstvou verzí a smaž
 
 ### Ostatní weby
 
-Recepty z dalších webů ulož stejně (najdi je třeba přes 🏠 Domů). Aplikace z nich vezme **jen recept**: suroviny, postup a tipy zvlášť. Karta 1:1 je očištěná od menu, reklam, souvisejících článků a diskuze; autor receptu zůstává. Stránky jen s videem uložit nejde.
+Recepty z dalších webů ulož stejně (najdi je třeba přes 🏠 Domů). Aplikace z nich vezme **jen recept**: suroviny, postup a tipy zvlášť. Karta receptu je očištěná od menu, reklam, souvisejících článků a diskuze; autor receptu zůstává. Stránky jen s videem uložit nejde.
 
 ### Co se uloží
 
-- kopie stránky pro **kartu 1:1** (bez skriptů; styly, písma a obrázky se uloží jednou do sdílené složky `web_assets`),
+- místní snímek stránky pro **kartu receptu** (bez skriptů; styly, písma a obrázky se uloží jednou do sdílené složky `web_assets`),
 - název, suroviny, kroky a tipy včetně nastavení stroje,
 - data pro **jemné kroky** (kapitola 11) – u Monsieur Cuisine z jejich API, u Cookidoo z datové verze stránky,
 - **verze pro druhý robot** (kapitola 12).
@@ -210,7 +223,7 @@ Každý recept patří do jedné kategorie. Výchozí kategorie: Nezařazené, M
 
 ## 10. Prohlížení a vaření podle receptu
 
-**📄 Karta (1:1)** ukáže recept tak, jak vypadal na webu, i bez internetu. V tmavém režimu se karta ztmaví, obrázky zůstanou v původních barvách.
+**📄 Karta receptu** ukáže recept tak, jak vypadal na webu, i bez internetu. V tmavém režimu se karta ztmaví, obrázky zůstanou v původních barvách.
 
 **🍲 Režim Thermomix (TM6)** a **🤖 Monsieur Cuisine Smart (MCS)** otevřou přehrávač pro daný robot. Když recept pochází z jiného zdroje, zobrazí se převedená verze (kapitola 12).
 
@@ -260,7 +273,7 @@ Převedený recept je pomůcka, ne ověřený recept výrobce. Před vařením z
 
 ## 13. Překlady a offline překladač
 
-Recept i kartu 1:1 jde přeložit do češtiny nebo angličtiny: v liště receptu (🌐 Originál / 🇬🇧 English / 🇨🇿 Čeština) nebo v telefonu. Překlad běží na pozadí a hotový se uloží – příště se jen načte. **⚙️ → 🌍 Přeložit všechny recepty** přeloží celou kuchařku.
+Recept i kartu receptu jde přeložit do češtiny nebo angličtiny: v liště receptu (🌐 Originál / 🇬🇧 English / 🇨🇿 Čeština) nebo v telefonu. Překlad běží na pozadí a hotový se uloží – příště se jen načte. **⚙️ → 🌍 Přeložit všechny recepty** přeloží celou kuchařku.
 
 | Pořadí | Překladač | Kdy se použije | Internet |
 |---|---|---|---|
@@ -318,10 +331,10 @@ Všechna data jsou ve složce `localchef_data` – u exe vždy vedle `LocalChefS
 | `app.log` | záznam činnosti a chyb |
 | `recipes/` | jedna podsložka na recept |
 | `recipes_smazane/` | koš smazaných receptů |
-| `web_assets/` | sdílené styly, písma a obrázky karet 1:1 |
+| `web_assets/` | sdílené styly, písma a obrázky karet receptu |
 | `exported_recipes/` | výchozí místo pro zálohy .7z |
 | `pdf_exports/` | výchozí místo pro PDF |
-| `browser_profile/` | přihlášení na webech |
+| `browser_profile/` | data relace vestavěného prohlížeče (cookies) |
 | `browser_cache/` | dočasná mezipaměť prohlížeče (lze smazat) |
 | `argos_packages/` | jazykové modely offline překladače (jen u exe) |
 
@@ -339,7 +352,7 @@ Databáze si pamatuje úplnou cestu ke složce receptu. Když tam složka není 
 2. Pravé tlačítko → **📦 Exportovat zálohu (.7z)**, nebo tlačítko **📦 Exportovat označené** pod seznamem.
 3. Vyber, kam soubor uložit (výchozí `localchef_data/exported_recipes`).
 
-Záloha obsahuje vše: suroviny a kroky, překlady, převody pro oba roboty i kartu 1:1 s jejími styly a obrázky, takže karta funguje i na jiném počítači bez internetu.
+Záloha obsahuje vše: suroviny a kroky, překlady, převody pro oba roboty i kartu receptu s jejími styly a obrázky, takže karta funguje i na jiném počítači bez internetu.
 
 ### Import
 
