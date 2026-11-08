@@ -6,6 +6,8 @@
 
 LocalChef Studio je aplikace pro počítač (Python, PyQt6), která uchovává recepty v offline kuchařce ve tvém počítači a provede tě vařením krok po kroku. Pracuje s recepty pro **Thermomix® TM6** a **Monsieur Cuisine Smart** i se stovkami dalších webů s recepty – názvy spotřebičů a služeb slouží jen k popisu kompatibility.
 
+**[⬇️ Instalátor pro Windows](#instalátor-pro-windows-doporučeno)** · [Releases](https://github.com/johnpreclik/localchef-studio/releases/latest)
+
 > **Platforma:** LocalChef Studio je psané především pro **Windows 10/11** – tam se vyvíjí a testuje. Verze pro Docker (Linux, NAS) je **experimentální a v běžném provozu nebyla otestovaná**; automaticky se ověřuje jen její sestavení a spuštění.
 
 ## Funkce
@@ -22,12 +24,6 @@ LocalChef Studio je aplikace pro počítač (Python, PyQt6), která uchovává r
 
 Dokumentace: [návod](docs/LocalChef_Studio_navod_CZ.md) ([PDF](docs/LocalChef_Studio_navod_CZ.pdf)) · [úplná dokumentace](docs/LocalChef_Studio_dokumentace_CZ.md) ([PDF](docs/LocalChef_Studio_dokumentace_CZ.pdf))
 
-## Stažení a instalace (Windows 10/11)
-
-Stáhni **LocalChef_Studio_1.5.exe** z [Releases](https://github.com/johnpreclik/localchef-studio/releases/latest) a spusť ho – klasický instalátor se zástupcem v nabídce Start a odinstalací. Instaluje se pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio` (bez administrátora). Instalátor není podepsaný, SmartScreen se proto může zeptat: *Další informace → Přesto spustit*. Recepty a nastavení (`localchef_data`) aktualizace zachová a odinstalace je nesmaže.
-
-Každé vydání má také **LocalChef_Studio_1.5_python.zip** (spuštění z Pythonu nebo sestavení vlastního exe) a **LocalChef_Studio_1.5_docker.zip** (soubory pro Docker).
-
 ## Spuštění z Pythonu (3.10+, testováno na 3.13 / Windows)
 
 ```
@@ -36,6 +32,16 @@ py localchef_studio_v1.5.py
 ```
 
 Verze je v názvu souboru. Všechna data jsou uložená místně ve složce `localchef_data` vedle programu: recepty, nastavení, API klíče a data relace vestavěného prohlížeče. Data ze starší verze se převezmou samy. Složka se do Gitu nikdy nenahrává (viz `.gitignore`) a nemá se sdílet – jsou v ní tvoje API klíče.
+
+## Instalátor pro Windows (doporučeno)
+
+Nejjednodušší cesta, jak dostat LocalChef Studio do Windows 10/11 – Python není potřeba.
+
+**[⬇️ Stáhnout LocalChef_Studio_1.5.exe](https://github.com/johnpreclik/localchef-studio/releases/latest/download/LocalChef_Studio_1.5.exe)** (asi 280 MB) · [všechny soubory posledního vydání](https://github.com/johnpreclik/localchef-studio/releases/latest)
+
+Je to klasický instalátor se zástupcem v nabídce Start (volitelně i na ploše) a odinstalací. Instaluje se pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio` (bez administrátora). Instalátor není podepsaný, SmartScreen se proto může zeptat: *Další informace → Přesto spustit*. Recepty a nastavení (`localchef_data`) aktualizace zachová a odinstalace je nesmaže.
+
+Každé vydání má také **LocalChef_Studio_1.5_python.zip** (spuštění z Pythonu nebo sestavení vlastního exe) a **LocalChef_Studio_1.5_docker.zip** (soubory pro Docker).
 
 ## Sestavení exe pro Windows
 

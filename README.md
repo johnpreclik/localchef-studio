@@ -6,6 +6,8 @@
 
 LocalChef Studio is a desktop app (Python, PyQt6) that keeps your recipes in an offline cookbook on your own computer and guides you through cooking step by step. It works with recipes for **Thermomix® TM6** and **Monsieur Cuisine Smart** and with hundreds of other recipe websites – the appliance and service names are used only to describe compatibility.
 
+**[⬇️ Windows installer](#windows-installer-recommended)** · [Releases](https://github.com/johnpreclik/localchef-studio/releases/latest)
+
 > **Platform:** LocalChef Studio is written primarily for **Windows 10/11** – that is where it is developed and tested. The Docker version (Linux, NAS) is **experimental and has not been tested in everyday use**; only its build and start are checked automatically.
 
 ## Features
@@ -22,12 +24,6 @@ LocalChef Studio is a desktop app (Python, PyQt6) that keeps your recipes in an 
 
 Documentation: [user guide](docs/LocalChef_Studio_user_guide_EN.md) ([PDF](docs/LocalChef_Studio_user_guide_EN.pdf)) · [full documentation](docs/LocalChef_Studio_documentation_EN.md) ([PDF](docs/LocalChef_Studio_documentation_EN.pdf))
 
-## Download and install (Windows 10/11)
-
-Download **LocalChef_Studio_1.5.exe** from [Releases](https://github.com/johnpreclik/localchef-studio/releases/latest) and run it – a standard installer with a Start menu shortcut and an uninstaller. It installs for the current user into `%LOCALAPPDATA%\Programs\LocalChef Studio` (no administrator). The installer is not code-signed, so SmartScreen may ask: *More info → Run anyway*. Recipes and settings (`localchef_data`) survive updates and are not deleted on uninstall.
-
-Each release also has **LocalChef_Studio_1.5_python.zip** (run from Python or build your own .exe) and **LocalChef_Studio_1.5_docker.zip** (Docker files).
-
 ## Run with Python (3.10+, tested on 3.13 / Windows)
 
 ```
@@ -36,6 +32,16 @@ py localchef_studio_v1.5.py
 ```
 
 The version is part of the file name. All data are stored locally in `localchef_data` next to the program: recipes, settings, API keys and the built-in browser's session data. Data from an older version are taken over automatically. This folder is never committed (see `.gitignore`) and should not be shared – it contains your API keys.
+
+## Windows installer (recommended)
+
+The easiest way to get LocalChef Studio on Windows 10/11 – no Python needed.
+
+**[⬇️ Download LocalChef_Studio_1.5.exe](https://github.com/johnpreclik/localchef-studio/releases/latest/download/LocalChef_Studio_1.5.exe)** (about 280 MB) · [all files of the latest release](https://github.com/johnpreclik/localchef-studio/releases/latest)
+
+It is a standard installer with a Start menu shortcut (optionally a desktop one) and an uninstaller. It installs for the current user into `%LOCALAPPDATA%\Programs\LocalChef Studio` (no administrator). The installer is not code-signed, so SmartScreen may ask: *More info → Run anyway*. Recipes and settings (`localchef_data`) survive updates and are not deleted on uninstall.
+
+Each release also has **LocalChef_Studio_1.5_python.zip** (run from Python or build your own .exe) and **LocalChef_Studio_1.5_docker.zip** (Docker files).
 
 ## Build a Windows .exe
 
