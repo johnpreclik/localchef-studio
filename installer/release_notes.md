@@ -14,6 +14,11 @@ Your recipes, settings and logins are stored in `localchef_data` next to the pro
 
 Stáhni **LocalChef_Studio_{version}.exe** a spusť ho. SmartScreen může varovat před neznámým vydavatelem (instalátor není podepsaný) – **Další informace → Přesto spustit**. Aplikace se nainstaluje pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio` bez administrátora. Recepty a nastavení jsou ve složce `localchef_data` vedle programu; aktualizace je zachová, odinstalace je **nesmaže**.
 
+### Other downloads
+
+- **LocalChef_Studio_{version}_python.zip** – run the app from Python (`py localchef_studio_v{version}.py`) or build your own .exe with `build_exe.bat`; includes the PDF documentation.
+- **LocalChef_Studio_{version}_docker.zip** – Docker version: `build_docker.bat` on Windows with Docker Desktop, or `docker-compose.yml` for a NAS (TrueNAS). The app then runs in a browser at http://localhost:6080/.
+
 What's new is shown in the app on first start (ℹ️ What's new). Documentation: [docs](https://github.com/johnpreclik/localchef-studio/tree/main/docs).
 
 ---

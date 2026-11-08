@@ -1,5 +1,6 @@
 # Windows instalátor: build_exe.bat (PyInstaller) → kontrola exe → Inno Setup → kontrola instalace → GitHub Release.
-# Spouští se ručně (Actions → Windows installer → Run workflow) nebo tagem v* (git tag v1.5 && git push --tags).
+# Spouští se jen ručně (Actions → Windows installer → Run workflow). Tagem ne: release se vydává s instalátorem
+# postaveným u autora (Inno Setup 7) a tag by ho přepsal buildem z Actions.
 # Instalátor se nenahrává jako artefakt (1 GB by přetekl limit úložiště Actions), jde rovnou do Release.
 name: Windows installer
 
@@ -9,8 +10,6 @@ on:
       publish:
         description: "Publish the installer as a GitHub release (yes / no)"
         default: "yes"
-  push:
-    tags: ["v*"]
 
 permissions:
   contents: write
