@@ -1,0 +1,70 @@
+# Ověří Docker verzi: sestaví obraz z GitHubu stejným příkazem jako NAS (TrueNAS), spustí kontejner a zkontroluje,
+# že běží aplikace, noVNC (6080) i server pro telefon (3665). Snímek virtuální obrazovky je v artefaktech běhu.
+name: Docker build
+
+on:
+  workflow_dispatch:
+    inputs:
+      with_argos:
+        description: "Offline translator in the image (1 = yes, 0 = no)"
+        default: "1"
+  push:
+    branches: [main]
+    paths:
+      - "docker/**"
+      - "docker-compose.yml"
+      - "requirements.txt"
+      - ".github/workflows/docker-build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Build from the Git URL (same command as on a NAS)
+        run: |
+          docker build -t localchef-studio -f docker/Dockerfile \
+            --build-arg WITH_ARGOS=${{ github.event.inputs.with_argos || '1' }} \
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git#${{ github.ref_name }}"
+          docker image ls localchef-studio
+
+      - name: Start the container
+        run: |
+          mkdir -p data
+          docker run -d --name localchef --shm-size=1g -p 6080:6080 -p 3665:3665 \
+            -e LOCALCHEF_LAN_HOST=127.0.0.1 -v "$PWD/data:/data/localchef_data" localchef-studio
+          for i in $(seq 1 90); do curl -fsS http://localhost:6080/vnc.html >/dev/null 2>&1 && break; sleep 2; done
+          sleep 40
+
+      - name: Check noVNC, the app and the phone server
+        run: |
+          set -x
+          curl -fsS http://localhost:6080/ | grep -qi "vnc.html"
+          curl -fsS http://localhost:6080/vnc.html | grep -qi "novnc"
+          docker exec localchef ps aux | grep -v grep | grep "localchef_studio_v"
+          curl -fsS http://localhost:3665/ | head -c 300
+          curl -fsS http://localhost:3665/api/recipes | head -c 300
+          ls -la data
+          test -f data/catalog.db
+
+      - name: Screenshot of the virtual screen
+        if: always()
+        run: |
+          docker exec -e DISPLAY=:99 localchef python -c "from PyQt6.QtWidgets import QApplication; a = QApplication([]); a.primaryScreen().grabWindow(0).save('/tmp/screen.png')" || true
+          docker cp localchef:/tmp/screen.png screen.png || true
+
+      - name: Logs
+        if: always()
+        run: |
+          docker logs localchef 2>&1 | tail -80
+          test -f data/app.log && tail -60 data/app.log || echo "no app.log"
+          if [ -f data/app.log ] && grep -q "Traceback" data/app.log; then echo "::error::Traceback in app.log"; exit 1; fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: localchef-docker-check
+          path: |
+            screen.png
+            data/app.log
+          if-no-files-found: ignore

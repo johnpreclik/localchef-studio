@@ -1,0 +1,22 @@
+# LocalChef Studio v Dockeru – obraz se sestaví přímo z GitHubu (nic se nestahuje ručně).
+# TrueNAS SCALE 24.10+: Apps → Discover → Custom App → Install via YAML (vložit tento soubor a upravit 3 označené hodnoty níže).
+# Jinde: docker compose up -d --build
+services:
+  localchef:
+    build:
+      context: https://github.com/johnpreclik/localchef-studio.git#main
+      dockerfile: docker/Dockerfile
+      args:
+        WITH_ARGOS: "1"                 # "0" = bez offline překladače (obraz o ~2 GB menší)
+    image: localchef-studio:latest
+    container_name: localchef
+    restart: unless-stopped
+    shm_size: 1gb
+    ports:
+      - "6080:6080"                     # ovládání v prohlížeči: http://IP_NASU:6080/
+      - "3665:3665"                     # aplikace pro telefon (QR kód v aplikaci)
+    environment:
+      LOCALCHEF_LAN_HOST: "192.168.1.10"   # 1) IP adresa NASu v síti (pro QR kód v telefonu)
+      VNC_PASSWORD: "zmenit"               # 2) heslo pro ovládání v prohlížeči (VNC bere max. 8 znaků)
+    volumes:
+      - /mnt/tank/apps/localchef:/data/localchef_data   # 3) složka na úložišti NASu pro recepty a nastavení

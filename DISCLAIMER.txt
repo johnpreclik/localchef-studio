@@ -1,0 +1,91 @@
+﻿LOCALCHEF STUDIO 1.5 – PRÁVNÍ UPOZORNĚNÍ / DISCLAIMER
+======================================================================
+
+[CZ] ČESKY
+----------
+
+1. Vzdělávací a osobní účel
+   Tento nástroj byl vyvinut pro vzdělávací účely (zpracování dat z webu,
+   překlad, převod receptů mezi kuchyňskými roboty) a pro osobní potřebu.
+   Neslouží k pirátství, k obcházení předplatného, placeného obsahu ani
+   jiných omezení přístupu a nesmí se k nim používat.
+
+2. Nezávislý projekt
+   Aplikace LocalChef Studio není spojena se společnostmi Vorwerk
+   (Thermomix, Cookidoo) ani Lidl / Hoyer Handel (Monsieur Cuisine), není
+   jimi schválena ani podporována. Uvedené názvy jsou ochranné známky
+   svých vlastníků a aplikace je používá jen k označení webů a zařízení,
+   se kterými spolupracuje.
+
+3. Autorská práva
+   Recepty, texty, fotografie a grafika patří jejich autorům a
+   provozovatelům webů. Ukládejte jen recepty, ke kterým máte legální
+   přístup (např. vlastní předplatné), a nezveřejňujte, neprodávejte ani
+   hromadně nešiřte je. Za předání receptů jiným osobám odpovídáte sami.
+
+4. Podmínky webů
+   Ukládání stránek může omezovat podmínky použití daného webu. Uživatel
+   je povinen je dodržovat; za jejich porušení nebo zablokování účtu
+   odpovídá uživatel, ne autor aplikace.
+
+5. Bez záruky
+   Aplikace se poskytuje „tak, jak je“, bez jakékoli záruky. Autor
+   neodpovídá za ztrátu dat ani jiné škody.
+
+6. Vaření a bezpečnost
+   Převody mezi stroji, přepočty a překlady jsou strojové a mohou být
+   chybné. Před vařením zkontrolujte teploty, časy, rychlosti, množství a
+   alergeny a řiďte se návodem ke svému zařízení.
+
+7. Překlady a klíče
+   Při překladu přes DeepL nebo Gemini se texty receptů odesílají těmto
+   službám. API klíče zůstávají jen ve vašem počítači (config.json) –
+   nikomu je nedávejte.
+
+Používáním aplikace s těmito podmínkami souhlasíte.
+
+
+[EN] ENGLISH
+------------
+
+1. Educational and personal use
+   This tool was developed for educational purposes (processing web data,
+   translating and converting recipes between kitchen machines) and for
+   personal use. It is not meant for piracy or for getting around
+   subscriptions, paid content or any other access restrictions, and must
+   not be used for that.
+
+2. Independent project
+   LocalChef Studio is not affiliated with, endorsed or supported by
+   Vorwerk (Thermomix, Cookidoo) or Lidl / Hoyer Handel (Monsieur
+   Cuisine). The names mentioned are trademarks of their owners and are
+   used only to identify the websites and appliances the app works with.
+
+3. Copyright
+   Recipes, texts, photos and graphics belong to their authors and the
+   website operators. Save only recipes you have legitimate access to
+   (e.g. your own subscription) and do not publish, sell or mass-
+   distribute them. You alone are responsible for sharing recipes with
+   others.
+
+4. Website terms
+   Saving pages may be restricted by a website's terms of use. Users must
+   follow them; the user, not the author of the app, is responsible for
+   any breach of terms or account suspension.
+
+5. No warranty
+   The app is provided “as is”, without warranty of any kind. The author
+   is not liable for data loss or other damage.
+
+6. Cooking and safety
+   Conversions between machines, recalculations and translations are
+   machine-made and may contain mistakes. Check temperatures, times,
+   speeds, quantities and allergens before cooking and follow your
+   appliance's manual.
+
+7. Translations and keys
+   When translating with DeepL or Gemini, recipe texts are sent to those
+   services. API keys stay only on your computer (config.json) – never
+   share them.
+
+By using the app you agree to these terms.

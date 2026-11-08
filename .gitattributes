@@ -1,0 +1,9 @@
+# Windows skripty musí mít CRLF (cmd s LF neumí spolehlivě goto/call)
+*.bat text eol=crlf
+*.sh text eol=lf
+Dockerfile text eol=lf
+
+# Interni soubory vyvoje - nejsou soucasti zverejnene verze (git archive)
+CLAUDE.md export-ignore
+HANDOFF.md export-ignore
+tools/publish_public.py export-ignore

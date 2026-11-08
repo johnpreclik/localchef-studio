@@ -1,0 +1,6 @@
+# Do obrazu jde jen kód aplikace – nikdy recepty, klíče (config.json) ani přihlášení
+*
+!localchef_studio_v*.py
+!DISCLAIMER.txt
+!requirements.txt
+!docker/

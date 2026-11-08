@@ -1,0 +1,32 @@
+# === Osobní data – NIKDY nenahrávat ===
+# klíče (config.json), přihlášení (browser_profile), uložené recepty (autorská práva)
+localchef_data/
+cookidoo_data/
+config.json
+
+# === Sestavení exe ===
+.venv-build/
+build/
+dist/
+dist_installer/
+*.spec
+
+# === Python ===
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# === Systém / editory ===
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# === Vygenerované PDF (dokumentace ponech ručně v docs/, pokud chceš) ===
+*.pdf
+!docs/*.pdf
+
+# === Docker: data kontejneru (recepty, klice, prihlaseni) ===
+docker_data/

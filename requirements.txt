@@ -1,0 +1,10 @@
+# Povinné
+PyQt6
+PyQt6-WebEngine
+beautifulsoup4
+
+# Volitelné
+argostranslate      # offline překladač (bez internetu a bez klíčů)
+deepl               # překlad přes DeepL (vyžaduje API klíč)
+py7zr               # export a import záloh receptů (.7z)
+recipe-scrapers     # ukládání receptů ze stovek dalších webů
