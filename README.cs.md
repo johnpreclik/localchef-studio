@@ -12,11 +12,11 @@ LocalChef Studio je aplikace pro počítač (Python, PyQt6), která uchovává r
 
 ## Funkce
 
-- **Offline kuchařka** – uloží vytažené suroviny, kroky a tipy a místní snímek stránky receptu pro osobní prohlížení offline; funguje bez internetu.
-- **Hledání** – jedna úvodní stránka hledá v kuchařce i na webech s recepty, podle názvu nebo suroviny.
+- **Offline kuchařka** – uloží suroviny, kroky, tipy, obrázek, autora a odkaz na zdroj receptu a každý recept ukáže v jednotné kartě receptu, ať je z kteréhokoli webu; funguje bez internetu.
+- **Hledání** – jedna úvodní stránka hledá v kuchařce i na webech s recepty, podle názvu nebo suroviny; na zahraničních webech v jejich jazyce (hledaný výraz se přeloží).
 - **Přehrávač vaření** – velké ciferníky čas / teplota / rychlost, zvýrazněné suroviny aktuálního kroku, přepočet dávky, metrické jednotky a jemné kroky.
 - **Převod mezi spotřebiči** – každý recept dostane verzi pro oba podporované typy (vestavěná pravidla, volitelně AI přes Gemini); recepty z ostatních webů převede offline asistent.
-- **Překlady** – čeština a angličtina přes DeepL, Gemini nebo úplně offline (Argos Translate); stažení aplikace nabídne při startu.
+- **Překlady** – čeština a angličtina přes DeepL, Gemini nebo úplně offline (Argos Translate); když chybí, aplikace ho při startu sama stáhne a ukáže průběh; recept, který už v cílovém jazyce je, se nepřekládá.
 - **Export do PDF** – přehledný list receptu na jednu stránku.
 - **Záloha** – export označených receptů do jednoho `.7z` a import jedné či více záloh na libovolném počítači.
 - **Aplikace v telefonu přes Wi-Fi** – kuchařka v prohlížeči telefonu nebo tabletu přes QR kód.
@@ -28,7 +28,7 @@ Dokumentace: [návod](docs/LocalChef_Studio_navod_CZ.md) ([PDF](docs/LocalChef_S
 
 ```
 py -m pip install -r requirements.txt
-py localchef_studio_v1.5.py
+py localchef_studio_v1.6.py
 ```
 
 Verze je v názvu souboru. Všechna data jsou uložená místně ve složce `localchef_data` vedle programu: recepty, nastavení, API klíče a data relace vestavěného prohlížeče. Data ze starší verze se převezmou samy. Složka se do Gitu nikdy nenahrává (viz `.gitignore`) a nemá se sdílet – jsou v ní tvoje API klíče.
@@ -37,18 +37,18 @@ Verze je v názvu souboru. Všechna data jsou uložená místně ve složce `loc
 
 Nejjednodušší cesta, jak dostat LocalChef Studio do Windows 10/11 – Python není potřeba.
 
-**[⬇️ Stáhnout LocalChef_Studio_1.5.exe](https://github.com/johnpreclik/localchef-studio/releases/latest/download/LocalChef_Studio_1.5.exe)** (asi 280 MB) · [všechny soubory posledního vydání](https://github.com/johnpreclik/localchef-studio/releases/latest)
+**[⬇️ Stáhnout LocalChef_Studio_1.6.exe](https://github.com/johnpreclik/localchef-studio/releases/latest/download/LocalChef_Studio_1.6.exe)** (asi 280 MB) · [všechny soubory posledního vydání](https://github.com/johnpreclik/localchef-studio/releases/latest)
 
-Je to klasický instalátor se zástupcem v nabídce Start (volitelně i na ploše) a odinstalací. Instaluje se pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio` (bez administrátora). Instalátor není podepsaný, SmartScreen se proto může zeptat: *Další informace → Přesto spustit*. Recepty a nastavení (`localchef_data`) aktualizace zachová a odinstalace je nesmaže.
+Je to klasický instalátor se zástupcem v nabídce Start (volitelně i na ploše) a odinstalací. Instaluje se pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio` (bez administrátora). Instalátor není podepsaný, SmartScreen se proto může zeptat: *Další informace → Přesto spustit*. Recepty a nastavení (`localchef_data`) aktualizace zachová a odinstalace je nesmaže. Při startu aplikace zjistí, jestli je na GitHubu nová verze, a když souhlasíš, sama ji stáhne a nainstaluje (⚙️ Nastavení → 🔄 Zkontrolovat aktualizace).
 
-Každé vydání má také **LocalChef_Studio_1.5_python.zip** (spuštění z Pythonu nebo sestavení vlastního exe) a **LocalChef_Studio_1.5_docker.zip** (soubory pro Docker).
+Každé vydání má také **LocalChef_Studio_1.6_python.zip** (spuštění z Pythonu nebo sestavení vlastního exe) a **LocalChef_Studio_1.6_docker.zip** (soubory pro Docker).
 
 ## Sestavení exe pro Windows
 
 Spusť `build_exe.bat` – vytvoří `dist\LocalChefStudio\LocalChefStudio.exe` se všemi knihovnami (1–2 GB kvůli offline překladači). Instalátor se pak sestaví programem [Inno Setup](https://jrsoftware.org/isinfo.php):
 
 ```
-iscc /DAppVersion=1.5 installer\localchef_studio.iss
+iscc /DAppVersion=1.6 installer\localchef_studio.iss
 ```
 
 Totéž umí na GitHubu workflow [Windows installer](.github/workflows/windows-installer.yml) (spouští se ručně): spustí `build_exe.bat`, vyzkouší program, postaví instalátor, zkušebně ho nainstaluje a odinstaluje a může vytvořit GitHub Release.
@@ -73,7 +73,7 @@ Pak v prohlížeči otevři http://localhost:6080/.
 - `--build-arg WITH_ARGOS=0` v příkazu `docker build` vynechá offline překladač (obraz je asi o 2 GB menší).
 - Recepty a nastavení zůstávají ve složce `~/localchef_data`.
 - Aktualizace: znovu `docker build`, pak `docker rm -f localchef` a stejný `docker run`. Data zůstanou.
-- Bez přístupu na GitHub: rozbal `LocalChef_Studio_1.5_docker.zip` z Releases a v jeho složce spusť `docker build -t localchef-studio -f docker/Dockerfile .`.
+- Bez přístupu na GitHub: rozbal `LocalChef_Studio_1.6_docker.zip` z Releases a v jeho složce spusť `docker build -t localchef-studio -f docker/Dockerfile .`.
 - Když tvůj uživatel není ve skupině `docker`, dej před `docker` ještě `sudo`.
 
 ### NAS, např. TrueNAS SCALE 24.10+

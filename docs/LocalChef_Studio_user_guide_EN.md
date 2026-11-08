@@ -1,14 +1,16 @@
 # LocalChef Studio – User Guide
 
-Version 1.5 · a short guide for everyday cooking. Details are in the documentation and in the app under the ❓ How to use button.
+Version 1.6 · a short guide for everyday cooking. Details are in the documentation and in the app under the ❓ How to use button.
 
 ## 1. Getting started
 
-**Install:** download `LocalChef_Studio_1.5.exe` from https://github.com/johnpreclik/localchef-studio/releases/latest and run it (SmartScreen: "More info → Run anyway"). The app appears in the Start menu.
+**Install:** download `LocalChef_Studio_1.6.exe` from https://github.com/johnpreclik/localchef-studio/releases/latest and run it (SmartScreen: "More info → Run anyway"). The app appears in the Start menu.
 
-**Start:** double-click `LocalChefStudio.exe` (or `py localchef_studio_v1.5.py`). On first start the **What's new and terms of use** window appears – read it to the end and click OK. If you like the app, you can support the author with the **💛 Donation** button (Ko-fi, PayPal, Revolut).
+**Start:** double-click `LocalChefStudio.exe` (or `py localchef_studio_v1.6.py`). On first start the **What's new and terms of use** window appears – read it to the end and click OK. If you like the app, you can support the author with the **💛 Donation** button (Ko-fi, PayPal, Revolut).
 
-**Offline translator:** the app then asks whether to download the offline translator (recipes can then be translated without internet and without keys). Choose **YES** or **NO**. If it should not ask again, tick **Don't ask again**. You can download it any time in **⚙️ Settings → 📥 Download offline translator**.
+**Offline translator:** when it is missing, the app downloads it by itself and shows the progress in percent in a window (recipes can then be translated without internet and without keys). You can **Hide** the window (the download continues) or **Cancel** it. If it should not download automatically, tick **Don't download automatically next time**. You can download it any time in **⚙️ Settings → 📥 Download offline translator**.
+
+**Updates:** when a new version is on GitHub, the app asks at start whether to download and install it. After **YES** it closes, installs the new version and starts again; recipes and settings stay. By hand: **⚙️ Settings → 🔄 Check for updates**.
 
 **Logging in to Cookidoo** (Thermomix recipes only):
 
@@ -22,7 +24,7 @@ Monsieur Cuisine and other sites need no login.
 
 ## 2. Find and save a recipe
 
-**Search:** click **🏠 Home**, type a name or ingredient and choose search by name or by ingredient. You will see recipes from your cookbook and from websites (Cookidoo, Monsieur Cuisine, Prima FRESH, Chefkoch, Allrecipes, BBC Good Food).
+**Search:** click **🏠 Home**, type a name or ingredient and choose search by name or by ingredient. You will see recipes from your cookbook and from websites (Cookidoo, Monsieur Cuisine, Prima FRESH, Allrecipes, BBC Good Food). English sites are searched in English ("zelňačka" → "sauerkraut soup") and Czech sites in Czech; each site shows the term it used. The search bar stays at the top while scrolling.
 
 **One recipe:**
 
@@ -35,7 +37,7 @@ From other sites only the recipe is kept: ingredients, method and tips, without 
 ## 3. Cooking with a recipe
 
 1. Click a recipe in the list on the left.
-2. Choose a view: **📄 Recipe card** (the recipe page), **🍲 Thermomix Mode (TM6)** or **🤖 Monsieur Cuisine Smart (MCS)**.
+2. Choose a view: **📄 Recipe card** (the recipe in the app's design with a link to the source), **🍲 Thermomix Mode (TM6)** or **🤖 Monsieur Cuisine Smart (MCS)**.
 3. Move between steps with **◀ PREVIOUS STEP** and **NEXT STEP ▶**.
 
 **What you see:** dials with time, temperature and speed, the ingredient list with the ones for the current step highlighted, and the step text. A recipe for one robot is converted for the other automatically.
@@ -62,7 +64,7 @@ If the phone cannot connect, allow the app in Windows Firewall.
 
 In the recipe bar click **🇬🇧 English** or **🇨🇿 Čeština** (back to the original with **🌐 Original**). The translation runs in the background and is stored – next time it just loads. **⚙️ → 🌍 Translate all recipes** translates the whole cookbook.
 
-The app translates with DeepL or Gemini (with a key), otherwise with the offline translator.
+The app translates with DeepL or Gemini (with a key), otherwise with the offline translator. A recipe that is already in English is not translated into English. You can keep using the app while it translates, even the whole cookbook.
 
 ## 6. Keys for better translations and conversions (free)
 

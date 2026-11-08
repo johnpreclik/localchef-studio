@@ -5,7 +5,7 @@ src = open(sys.argv[1], encoding="utf-8").read().split('if __name__ == "__main__
 g = {"__name__": "app"}; exec(compile(src, "app", "exec"), g)
 g["start_lan_http_server"] = lambda: None; g["init_db"]()
 win = g["LocalChefStudio"]()
-# ---- uložení receptu z Chefkoch
+# ---- saving a recipe from Chefkoch
 ld = {"@context":"https://schema.org","@type":"Recipe","name":"Einfache Kartoffelsuppe","recipeYield":"4","totalTime":"PT40M",
  "image":"https://img.chefkoch-cdn.de/x.jpg","recipeIngredient":["1 kg Kartoffeln","1 Zwiebel","2 EL Butter","1 l Gemüsebrühe","200 ml Sahne"],
  "nutrition": {"calories": "320 kcal", "fatContent": "14 g"},
@@ -22,13 +22,13 @@ con = sqlite3.connect(g["DB_PATH"]); print("db:", con.execute("select recipe_id,
 folder = g["resolve_recipe_folder"](con.execute("select folder_path from recipes").fetchone()[0])
 d = json.loads((folder/"recipe.json").read_text(encoding="utf-8")); print("saved:", d["extraction"], d["source_site"], len(d["steps"]), d["portions"])
 print("icon:", g["get_recipe_icon_prefix"]("other", False, "dots"), g["get_recipe_icon_prefix"]("other", True, "bots"))
-# ---- offline asistent
+# ---- offline assistant
 g["load_gemini_key"] = lambda: ""
 for dev in ("tm6", "mcs"):
     p = g["ensure_device_recipe_file"](folder, dev); c = json.loads(p.read_text(encoding="utf-8"))
     print(f"== {dev} ({c['converted_by']}):", c["title"])
     for s in c["steps"]: print("   ", s["assist"], s["dials"], "|", s["text"][:60])
-# ---- s klíčem Gemini se offline převod jednou vylepší
+# ---- with a Gemini key the offline conversion is improved once
 calls = []
 def fake_gem(data, key, target_device="mcs"):
     calls.append(target_device)
@@ -36,10 +36,10 @@ def fake_gem(data, key, target_device="mcs"):
 g["convert_recipe_via_gemini_api"] = fake_gem; g["load_gemini_key"] = lambda: "k"
 p = g["ensure_device_recipe_file"](folder, "tm6"); print("gemini upgrade:", json.loads(p.read_text(encoding="utf-8"))["converted_by"], calls)
 g["ensure_device_recipe_file"](folder, "tm6"); print("no 2nd call:", calls)
-# ---- hledání: kuchařka (název i surovina)
+# ---- search: cookbook (name and ingredient)
 print("local title:", [r["title"] for r in g["local_search"]("kartoffel", "title")])
 print("local ingr:", [r["title"] for r in g["local_search"]("sahne", "ingredient")], g["local_search"]("xyz", "ingredient"))
-# ---- server /api/search + fronta + skryté stránky
+# ---- server /api/search + queue + hidden pages
 H = g["LanCookidooHandler"]
 def get(path):
     h = H.__new__(H); h.path = path; h.wfile = io.BytesIO(); h.headers = {"Host": "pc"}

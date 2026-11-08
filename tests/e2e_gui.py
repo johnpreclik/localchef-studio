@@ -29,19 +29,19 @@ for q in ["kulajda", "KULAJ", "svickova", "smetan svíč", "hlavni", "xyz"]:
     win.search_input.setText(q); win._filter_catalog(q)
     print(f"hledat {q!r}:", [(c, k) for c, k, e in visible()], "| info:", win.lbl_search_info.text(), win.lbl_search_info.isVisible())
 win._filter_catalog("")
-# přeložené názvy
+# translated titles
 con = sqlite3.connect(g["DB_PATH"]); con.execute("UPDATE recipes SET title_en='Bohemian mushroom soup' WHERE recipe_id='r1'"); con.commit(); con.close()
 win.combo_title_lang.setCurrentIndex(1)
 print("názvy EN:", visible())
 win.search_input.setText("mushroom"); win._filter_catalog("mushroom"); print("hledat 'mushroom':", [(c, k) for c, k, e in visible()])
 win._filter_catalog(""); win.search_input.setText("")
 print("config title_lang:", g["load_config"]().get("title_lang"))
-# nová kategorie bez vybraného receptu
+# new category without a selected recipe
 fakeqt.Inp.text_answer = ("Saláty", True)
 win._new_category()
 print("kategorie v comboboxu:", [i[0] for i in win.combo_category_filter._items])
 print("strom:", [c for c, k, e in visible()])
-# nová kategorie s vybraným receptem → přesun
+# new category with a selected recipe → move
 root = win.recipe_tree.invisibleRootItem()
 item = [root.child(i).child(j) for i in range(root.childCount()) for j in range(root.child(i).childCount()) if root.child(i).child(j).data(0, 257) == "r3"][0]
 win.recipe_tree.setCurrentItem(item)
@@ -49,11 +49,11 @@ fakeqt.Inp.text_answer = ("Rychlovky", True); fakeqt.MB.answer = "yes"
 win._new_category()
 print("po přesunu:", [(c, k) for c, k, e in visible()])
 print("recipe.json category:", json.loads((R/"r3_Guláš"/"recipe.json").read_text(encoding="utf-8"))["category"])
-# filtr kategorie
+# category filter
 idx = win.combo_category_filter.findData("Saláty"); win.combo_category_filter.setCurrentIndex(idx)
 print("jen Saláty:", visible())
 win.combo_category_filter.setCurrentIndex(0)
-# jazyk UI
+# UI language
 win._change_ui_language(1)
 print("EN UI:", win.btn_settings.text(), "|", win.btn_translate_all.text(), "|", win.btn_new_cat.text(), "|", win.lbl_view.text(), "|", [i[0] for i in win.combo_title_lang._items], "|", [c for c, k, e in visible()])
 # PDF
@@ -62,7 +62,7 @@ fakeqt.FD.path = str(g["PDF_DIR"] / "kulajda")
 fakeqt.msgs.clear()
 win._export_current_to_pdf()
 print("PDF:", fakeqt.msgs, os.path.exists(fakeqt.FD.path + ".pdf"), "Ingredients" in fakeqt.printed.get("html", ""))
-# hromadný překlad
+# bulk translation
 g["translation_available"] = lambda: True
 win._ensure_translator = lambda: True
 g["translate_strings"] = lambda s, t, src: ([f"[{t}] {x}" for x in s], "gemini")
@@ -73,10 +73,10 @@ win._bulk_translate()
 for th in threading.enumerate():
     if th is not threading.current_thread() and th.daemon: th.join(timeout=10)
 win._poll_bulk_translation()
-print("bulk:", fakeqt.msgs[-1], g["BULK_TR"]["done"], g["BULK_TR"]["failed"])
+print("bulk:", fakeqt.msgs[-1], g["BULK_TR"].data["done"], g["BULK_TR"].data["failed"], g["BULK_TR"].state)
 print("názvy EN po překladu:", visible())
 win._bulk_translate(); print("bulk again:", fakeqt.msgs[-1])
-# zastavení
+# stopping
 print("TM render s dávkou 2:")
 win.current_offline_data = json.loads((R/"r1_Kulajda"/"recipe.json").read_text(encoding="utf-8")); win.portion_scale = 2.0
 win._render_tm_step(); print("  čas:", win.lbl_dial_time.text().replace("\n", " "))

@@ -11,7 +11,7 @@ WEB["https://cookidoo.cz/img/bg2.png"] = (b"PNG2", "image/png")
 calls.clear()
 print("start po změně webu:", g["refresh_web_assets"](), "stažení:", calls)
 print("soubory:", sorted(p.relative_to(W).as_posix() for p in W.rglob("*") if p.is_file()))
-# recept r1 i r2 dostanou nový styl bez stažení receptu
+# recipes r1 and r2 get the new style without downloading the recipe
 H = g["LanCookidooHandler"]
 for rid in ("r1","r2"):
     h = H.__new__(H); h.path = f"/api/card?id={rid}"; h.wfile = io.BytesIO(); h.headers = {"Host": "pc:3665"}

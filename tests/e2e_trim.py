@@ -1,4 +1,4 @@
-"""Ostatní weby (vzor Prima FRESH): postup bez balastu stránky, tipy zvlášť, karta receptu oříznutá na recept."""
+"""Other websites (Prima FRESH as the sample): method without page clutter, tips separately, recipe card trimmed to the recipe."""
 import sys, os, json
 sys.path.insert(0, os.path.dirname(__file__))
 import fakeqt; fakeqt.install()
@@ -6,7 +6,7 @@ src = open(sys.argv[1], encoding="utf-8").read().split('if __name__ == "__main__
 g = {"__name__": "app"}; exec(compile(src, "app", "exec"), g)
 g["start_lan_http_server"] = lambda: None; g["init_db"]()
 g["schedule_page_assets"] = lambda f: None
-g["scrape_other_recipe"] = lambda html, url: None        # test čtení ze stránky, ne recipe-scrapers
+g["scrape_other_recipe"] = lambda html, url: None        # test reading from the page, not recipe-scrapers
 win = g["LocalChefStudio"]()
 
 ld = {"@context": "https://schema.org", "@type": "Recipe", "name": "Česneková polévka s krutony",
@@ -57,7 +57,7 @@ visible = "\n".join(["Recepty", "Česneková polévka s krutony", "Postup příp
                      "Tipy na obměny receptu", "Se sýrem: Do misky přidejte nastrouhaný eidam.",
                      "Přečtěte si také", "Menopauza by v práci neměla být tabu", "Podmínky užívání"])
 
-# záchranná cesta z viditelného textu se zastaví na tipech
+# the fallback from visible text stops at the tips
 vt_steps = g["steps_from_visible_text"](visible)
 print("kroky z textu:", vt_steps)
 assert len(vt_steps) == 2, vt_steps
@@ -95,7 +95,7 @@ assert card.head.find("link", rel="stylesheet") is not None, "styly webu musí z
 assert g["find_recipe_ld"](card).get("name") == ld["name"], "JSON-LD musí zůstat"
 print("karta oříznutá: OK")
 
-# stránka, kde recept nejde najít, zůstane celá
+# a page where no recipe can be found stays whole
 plain = "<html><body><h1>Článek</h1><p>Nic o vaření.</p><footer>Patička</footer></body></html>"
 s2 = BeautifulSoup(plain, "html.parser")
 print("bez receptu ořezáno:", g["trim_recipe_page"](s2, {}, [], []), "| patička zůstala:", "Patička" in s2.get_text())

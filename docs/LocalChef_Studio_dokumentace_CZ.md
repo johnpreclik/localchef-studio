@@ -1,6 +1,6 @@
 # LocalChef Studio – dokumentace
 
-Verze 1.5 · offline kuchařka a průvodce vařením s kuchyňským robotem
+Verze 1.6 · offline kuchařka a průvodce vařením s kuchyňským robotem
 
 LocalChef Studio je nezávislý projekt. Není spojený se společnostmi Vorwerk (Thermomix, Cookidoo) ani Lidl (Monsieur Cuisine) a není jimi schválený ani podporovaný. Jejich názvy se v této dokumentaci používají jen k popisu kompatibility a jsou ochrannými známkami svých vlastníků.
 
@@ -10,8 +10,8 @@ LocalChef Studio ukládá recepty z webů s recepty do vlastní offline kuchařk
 
 Hlavní funkce v kostce:
 
-- **Offline kuchařka** – recept se uloží do počítače se surovinami a kroky a s místním snímkem stránky (karta receptu) pro osobní prohlížení offline.
-- **Kompatibilní weby** – recepty pro Thermomix TM6 (Cookidoo), Monsieur Cuisine Smart (monsieur-cuisine.com) a stovky dalších webů s recepty (Prima FRESH, Chefkoch, Allrecipes, BBC Good Food…).
+- **Offline kuchařka** – recept se uloží do počítače se surovinami a kroky a ukazuje se v jednotné kartě receptu aplikace (obrázek, autor, odkaz na zdroj, suroviny, postup, nutriční hodnoty, tipy), i offline.
+- **Kompatibilní weby** – recepty pro Thermomix TM6 (Cookidoo), Monsieur Cuisine Smart (monsieur-cuisine.com) a stovky dalších webů s recepty (Prima FRESH, Allrecipes, BBC Good Food…).
 - **Hledání** – úvodní stránka 🏠 Domů hledá ve vlastní kuchařce i na webech, podle názvu nebo suroviny.
 - **Dva roboty** – každý recept má verzi pro Thermomix TM6 i Monsieur Cuisine Smart (MCS); druhá vzniká automatickým převodem. Recepty z ostatních webů převede offline asistent.
 - **Přehrávač receptu** – velké ciferníky s časem, teplotou a rychlostí, zvýrazněné suroviny aktuálního kroku, přepočet dávky a jednotek, jemné kroky.
@@ -21,7 +21,7 @@ Hlavní funkce v kostce:
 - **Telefon** – počítač slouží jako server, recepty se otevřou v prohlížeči telefonu přes domácí Wi-Fi.
 - **Návod v aplikaci** – tlačítko ❓ Návod (česky i anglicky).
 
-Aplikace je jeden soubor `localchef_studio_v1.5.py` (číslo verze je v názvu). Spustit se dá jako Python skript (kapitola 2), jako samostatný program `LocalChefStudio.exe` bez Pythonu (kapitola 3), nebo v Dockeru, třeba na NASu (kapitola 4). Rozhraní je česky nebo anglicky.
+Aplikace je jeden soubor `localchef_studio_v1.6.py` (číslo verze je v názvu). Spustit se dá jako Python skript (kapitola 2), jako samostatný program `LocalChefStudio.exe` bez Pythonu (kapitola 3), nebo v Dockeru, třeba na NASu (kapitola 4). Rozhraní je česky nebo anglicky.
 
 **Platforma:** aplikace je psaná především pro **Windows 10/11**, kde se vyvíjí a testuje. Verze pro Docker je experimentální a v běžném provozu nebyla otestovaná.
 
@@ -29,7 +29,7 @@ Recepty se ukládají přes vestavěný prohlížeč. Všechno ostatní pracuje 
 
 ### Instalace z instalátoru (nejjednodušší)
 
-Stáhni **LocalChef_Studio_1.5.exe** ze stránky Releases (https://github.com/johnpreclik/localchef-studio/releases/latest) a spusť ho. Instalátor (česky nebo anglicky) nainstaluje aplikaci pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio`, bez administrátora, přidá zástupce do nabídky Start (volitelně na plochu) a odinstalaci do Nastavení Windows. Instalátor není podepsaný, SmartScreen se proto může zeptat: „Další informace → Přesto spustit“. Data (`localchef_data`) jsou vedle programu; aktualizace je zachová a odinstalace je nesmaže. Kdyby se aplikace nainstalovala tam, kam nejde zapisovat (Program Files), použije `%LOCALAPPDATA%\LocalChef Studio\localchef_data`.
+Stáhni **LocalChef_Studio_1.6.exe** ze stránky Releases (https://github.com/johnpreclik/localchef-studio/releases/latest) a spusť ho. Instalátor (česky nebo anglicky) nainstaluje aplikaci pro aktuálního uživatele do `%LOCALAPPDATA%\Programs\LocalChef Studio`, bez administrátora, přidá zástupce do nabídky Start (volitelně na plochu) a odinstalaci do Nastavení Windows. Instalátor není podepsaný, SmartScreen se proto může zeptat: „Další informace → Přesto spustit“. Data (`localchef_data`) jsou vedle programu; aktualizace je zachová a odinstalace je nesmaže. Kdyby se aplikace nainstalovala tam, kam nejde zapisovat (Program Files), použije `%LOCALAPPDATA%\LocalChef Studio\localchef_data`.
 
 ## 2. Požadavky a instalace (spuštění jako .py)
 
@@ -56,7 +56,7 @@ py -m pip install -r requirements.txt
 Spuštění:
 
 ```
-py localchef_studio_v1.5.py
+py localchef_studio_v1.6.py
 ```
 
 Spouštěj ze složky, kde mají být data: složka `localchef_data` se vytváří v aktuální složce příkazového řádku. Při prvním spuštění se Windows může zeptat na síťový přístup – povol ho pro soukromou síť, jinak nepůjde aplikace v telefonu (kapitola 15).
@@ -67,7 +67,7 @@ Spouštěj ze složky, kde mají být data: složka `localchef_data` se vytvář
 
 Skript `build_exe.bat` sestaví program `LocalChefStudio.exe`, který běží na Windows bez nainstalovaného Pythonu. Obsahuje vše včetně vestavěného prohlížeče, offline překladače a zálohování. Sestavení stačí udělat jednou na počítači s Pythonem.
 
-1. Dej `localchef_studio_v1.5.py` a `build_exe.bat` do stejné složky (skript si soubor s verzí najde sám).
+1. Dej `localchef_studio_v1.6.py` a `build_exe.bat` do stejné složky (skript si soubor s verzí najde sám).
 2. Spusť `build_exe.bat` dvojklikem. Nainstaluje PyInstaller a knihovny a sestaví program v režimu „složka“.
 3. Hotový program je ve složce `dist\LocalChefStudio`.
 
@@ -92,7 +92,7 @@ docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpre
 docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=IP_POCITACE -e VNC_PASSWORD=heslo -v "$HOME/localchef_data:/data/localchef_data" localchef-studio
 ```
 
-Pak otevři http://localhost:6080/. `IP_POCITACE` je adresa počítače v síti (pro QR kód v telefonu). `--build-arg WITH_ARGOS=0` v `docker build` vynechá offline překladač. Když tvůj uživatel není ve skupině `docker`, dej před `docker` ještě `sudo`. Bez přístupu na GitHub rozbal `LocalChef_Studio_1.5_docker.zip` z Releases a v jeho složce spusť `docker build -t localchef-studio -f docker/Dockerfile .`.
+Pak otevři http://localhost:6080/. `IP_POCITACE` je adresa počítače v síti (pro QR kód v telefonu). `--build-arg WITH_ARGOS=0` v `docker build` vynechá offline překladač. Když tvůj uživatel není ve skupině `docker`, dej před `docker` ještě `sudo`. Bez přístupu na GitHub rozbal `LocalChef_Studio_1.6_docker.zip` z Releases a v jeho složce spusť `docker build -t localchef-studio -f docker/Dockerfile .`.
 
 **NAS (např. TrueNAS SCALE 24.10 a novější):** stejné sestavení z GitHubu, v shellu NASu (TrueNAS: System → Shell):
 
@@ -147,23 +147,30 @@ Zobrazit: 📄 Karta receptu / 🍲 Režim Thermomix (TM6) / 🤖 Monsieur Cuisi
 |---|---|
 | Překlad | 🌍 Přeložit všechny recepty, ✨ Gemini AI klíč, 📥 Stáhnout offline překladač, 🔑 DeepL |
 | Vzhled | jazyk aplikace (čeština / angličtina), tmavý / světlý režim, styl ikon (🟢/🔵 nebo 🍲/🤖) |
-| Aplikace | ❓ Návod k použití, ℹ️ Co je nového a podmínky použití |
+| Aplikace | ❓ Návod k použití, ℹ️ Co je nového a podmínky použití, 🔄 Zkontrolovat aktualizace |
 
 ### První spuštění krok za krokem
 
 1. Spusť aplikaci (kapitola 2, 3 nebo 4). Vytvoří si prázdnou kuchařku.
 2. Ukáže se okno **Co je nového a podmínky použití**. Tlačítko OK se odemkne po dočtení do konce.
-3. Aplikace zkontroluje **offline překladač**. Když chybí, nabídne stažení (ANO / NE) s volbou „Příště se již neptat“. Stáhnout ho jde kdykoli v ⚙️ → 📥 Stáhnout offline překladač.
-4. Klikni na 🏠 Domů, najdi recept a ulož ho tlačítkem ⬇️ ULOŽIT RECEPT. Pro Cookidoo se nejdřív přihlas (kapitola 7).
-5. Volitelně zadej klíče Gemini nebo DeepL (kapitola 14).
+3. Aplikace zkontroluje **offline překladač**. Když chybí, sama ho stáhne a v okně ukazuje průběh v procentech (kapitola 13).
+4. Pak zjistí, jestli je na GitHubu **nová verze**. Když ano, zeptá se: *Na GitHubu je k dispozici nová verze – stáhnout a nainstalovat?* Po **ANO** se stáhne instalátor (ověří se jeho velikost a kontrolní součet SHA-256 z GitHubu), aplikace se zavře, nová verze se tiše nainstaluje do stejné složky a znovu se spustí. Recepty a nastavení (`localchef_data`) zůstanou. **Tuto verzi přeskočit** dotaz na danou verzi vypne; ručně jde aktualizace zkontrolovat v ⚙️ → 🔄 Zkontrolovat aktualizace. Při spuštění z Pythonu aplikace jen nabídne stránku ke stažení, v Dockeru se nová verze nehledá.
+5. Klikni na 🏠 Domů, najdi recept a ulož ho tlačítkem ⬇️ ULOŽIT RECEPT. Pro Cookidoo se nejdřív přihlas (kapitola 7).
+6. Volitelně zadej klíče Gemini nebo DeepL (kapitola 14).
 
 ## 6. Hledání receptů (🏠 Domů)
 
-Úvodní stránka hledá zároveň ve **tvé kuchařce** a na **webech s recepty**: Cookidoo, Monsieur Cuisine, Prima FRESH, Chefkoch, Allrecipes a BBC Good Food. Hledat jde podle **názvu** nebo podle **suroviny**.
+Úvodní stránka hledá zároveň ve **tvé kuchařce** a na **webech s recepty**: Cookidoo, Monsieur Cuisine, Prima FRESH, Allrecipes a BBC Good Food. Hledat jde podle **názvu** nebo podle **suroviny**.
 
 - Výsledky z webů se ukazují po zdrojích, s obrázkem a odkazem. Klik otevře recept ve vestavěném prohlížeči, kde ho uložíš.
 - Když web nic nenajde a místo výsledků nabídne „populární recepty“, aplikace je nebere.
 - Při hledání podle názvu jsou výsledky, které hledané slovo obsahují, první (porovnává se kmen slova bez diakritiky – „zelňačka“ najde i „Zelná polévka“).
+- **Překlad hledaného výrazu:** každý web má svůj jazyk. Anglické weby (Allrecipes, BBC Good Food) dostanou český výraz přeložený do angličtiny („zelňačka“ → „sauerkraut soup“), české weby anglický výraz česky. Web v jiném jazyce (např. německý web přidaný do `search_sources`) dostane nejdřív zadaný výraz, a když nic nenajde, anglický překlad. U webu je pak vidět „🌍 hledáno jako …“.
+- Jazyk výrazu se pozná podle diakritiky a slovníku; když to nejde, platí jazyk rozhraní. Česká jídla (zelňačka, svíčková, kulajda…) zná vestavěný slovník, ostatní přeloží DeepL, Gemini nebo offline překladač. Přeložené výrazy se pamatují v `search_translations.json`.
+- Výraz, u kterého jazyk nejde poznat („spaghetti“), se nejdřív hledá tak, jak je napsaný; přeložený až když nic nenajde. Stejně tak když český web nic nenajde, zkusí se výraz přeložený z angličtiny (a naopak).
+- Když web automatické hledání odmítne (ochrana proti robotům, HTTP 403/429), u webu se napíše „web odmítl automatické hledání“ a hodinu se ho aplikace znovu neptá. Odkaz na hledání na webu zůstává.
+- Chefkoch byl ve verzi 1.6 vyřazen: odmítá vestavěné prohlížeče (HTTP 403), takže na něm nešlo hledat ani ukládat.
+- Panel s hledáním zůstává při posouvání výsledků přilepený nahoře.
 - Stejné hledání funguje z telefonu (kapitola 15); výsledky pak vyhledá počítač.
 - Seznam webů jde rozšířit v `config.json` (klíč `search_sources`).
 
@@ -191,7 +198,7 @@ Uložením stejného receptu znovu se recept přepíše čerstvou verzí a smaž
 
 ### Ostatní weby
 
-Recepty z dalších webů ulož stejně (najdi je třeba přes 🏠 Domů). Aplikace z nich vezme **jen recept**: suroviny, postup a tipy zvlášť. Karta receptu je očištěná od menu, reklam, souvisejících článků a diskuze; autor receptu zůstává. Stránky jen s videem uložit nejde.
+Recepty z dalších webů ulož stejně (najdi je třeba přes 🏠 Domů). Aplikace z nich vezme **jen recept**: suroviny, postup a tipy zvlášť. K receptu se uloží i autor, obrázek a odkaz na zdroj. Nový recept se nabídne do kategorie svého webu (Cookidoo, Prima FRESH, Allrecipes…). Stránky jen s videem uložit nejde.
 
 ### Co se uloží
 
@@ -214,7 +221,7 @@ U ostatních webů navíc pomáhá knihovna recipe-scrapers. Z čeho aplikace vy
 
 ## 9. Kategorie a organizace kuchařky
 
-Každý recept patří do jedné kategorie. Výchozí kategorie: Nezařazené, Monsieur Cuisine, Hlavní jídla, Polévky, Pečení & Dezerty, Omáčky, Cizojazyčné. Vlastní vzniknou napsáním nového názvu nebo tlačítkem ➕ Nová kategorie. V databázi se ukládají česky; v anglickém rozhraní se jen zobrazí anglický název.
+Každý recept patří do jedné kategorie. Výchozí kategorie: Nezařazené, Snídaně, Svačiny, Předkrmy, Polévky, Saláty, Obědy, Večeře, Hlavní jídla, Přílohy, Omáčky, Pomazánky a dipy, Pečivo, Sladkosti a dezerty, Nápoje, Nealkoholické koktejly, Alkoholické koktejly, Zavařování. Nový recept se nabídne do kategorie svého webu (Cookidoo, Monsieur Cuisine, Prima FRESH, Allrecipes, BBC Good Food, u jiných webů podle adresy) a každý web má v seznamu vlastní barevnou ikonu. Vlastní vzniknou napsáním nového názvu nebo tlačítkem ➕ Nová kategorie. V databázi se ukládají česky; v anglickém rozhraní se jen zobrazí anglický název.
 
 - **Změna kategorie:** 🏷️ Změnit kategorii…, pravé tlačítko → 🏷️ Přesunout do kategorie, nebo přetažení myší na jinou kategorii.
 - **Oblíbené:** ⭐ označí recept hvězdičkou; oblíbené jsou v kategorii nahoře, filtr ⭐ Oblíbené ukáže jen je.
@@ -223,7 +230,7 @@ Každý recept patří do jedné kategorie. Výchozí kategorie: Nezařazené, M
 
 ## 10. Prohlížení a vaření podle receptu
 
-**📄 Karta receptu** ukáže recept tak, jak vypadal na webu, i bez internetu. V tmavém režimu se karta ztmaví, obrázky zůstanou v původních barvách.
+**📄 Karta receptu** ukáže recept v jednotném vzhledu aplikace, ať je z kteréhokoli webu: obrázek, název, autor, odkaz na zdroj (štítek webu), popis, porce a čas, suroviny, postup, nutriční hodnoty a tipy. Funguje bez internetu a sleduje světlý i tmavý vzhled. Přepínač v kartě ukáže kroky pro 🍲 Thermomix TM6 nebo 🤖 Monsieur Cuisine (u receptů z ostatních webů i původní kroky) se štítky nastavení (⏱ čas, 🌡 teplota, 🌀 rychlost). Míry se převedou na metrické (původní údaj je v závorce) a podle zvolené dávky. Pro všechny už uložené recepty platí totéž – nic se nepřevádí; když se u receptu nepodařilo vytáhnout suroviny ani postup, ukáže se uložená stránka. Stejnou kartu ukazuje telefon.
 
 **🍲 Režim Thermomix (TM6)** a **🤖 Monsieur Cuisine Smart (MCS)** otevřou přehrávač pro daný robot. Když recept pochází z jiného zdroje, zobrazí se převedená verze (kapitola 12).
 
@@ -281,13 +288,13 @@ Recept i kartu receptu jde přeložit do češtiny nebo angličtiny: v liště r
 | 2 | Gemini (Google AI) | je zadaný Gemini klíč | ano |
 | 3 | Argos Translate (offline) | je nainstalovaný a má jazykové modely | jen při stažení modelů |
 
-Když jeden překladač selže (limit, výpadek), aplikace bez ptaní zkusí další. Překládá se po větách s pamětí (`translation_cache.json`), takže verze TM6, MCS, jemné kroky i karta sdílí stejné překlady. Česky psaný recept se do češtiny nepřekládá.
+Když jeden překladač selže (limit, výpadek), aplikace bez ptaní zkusí další. Překládá se po větách s pamětí (`translation_cache.json`), takže verze TM6, MCS, jemné kroky i karta sdílí stejné překlady. Jazyk receptu se pozná z jeho textu (údaj o jazyku ze stránky platí, jen když mu text neodporuje). Recept, který už v cílovém jazyce je, se nepřekládá – jen se zobrazí, i bez překladače a bez klíčů. Překlad i hromadný překlad běží na pozadí, aplikaci jde mezitím normálně používat.
 
 ### Offline překladač (Argos Translate)
 
 Překládá přímo v počítači, bez klíče a bez internetu. Potřebuje jazykové modely, které se stahují jednou (každý desítky až stovky MB).
 
-- **Při startu** aplikace zkontroluje, jestli je překladač nainstalovaný a má modely. Když ne, zeptá se **ANO / NE**; zaškrtnutím **Příště se již neptat** se dotaz vypne.
+- **Při startu** aplikace zkontroluje, jestli je překladač nainstalovaný a má modely. Když ne, **sama ho stáhne** a v okně ukazuje průběh v procentech (u .py nejdřív nainstaluje knihovnu přes pip – tam procenta nejsou). **Skrýt** zavře okno a stahuje se dál na pozadí, **Zrušit** stahování ukončí, **Příště nestahovat automaticky** automatické stahování vypne.
 - Stáhnout ho jde kdykoli v **⚙️ → 📥 Stáhnout offline překladač**. Při spuštění z Pythonu umí aplikace doinstalovat i knihovnu `argostranslate`, v exe je přibalená.
 - Běží v samostatném procesu, takže ani jeho pád aplikaci neshodí; první překlad po startu chvíli trvá (načítá modely).
 - Modely jsou u .py v uživatelském profilu, u exe v `localchef_data\argos_packages`.
@@ -373,7 +380,7 @@ První místo, kam se dívat, je `localchef_data/app.log`. Neošetřená chyba a
 | Recept z Cookidoo nemá kroky | nejsi přihlášený nebo se stránka nenačetla | přihlas se, počkej na načtení a ulož znovu |
 | „Recept nerozpoznán“ | web nemá recept ve známé podobě | zkus stejný recept z jiného webu, nainstaluj `recipe-scrapers` |
 | Divné nebo chybějící kroky | starší uložení | recept ulož znovu |
-| Hledání na webu nic nenajde | web výraz nezná (např. české slovo na Chefkochu) | zkus jiné slovo nebo hledání podle suroviny |
+| Hledání na webu nic nenajde | web výraz nezná (např. české jídlo na anglickém webu) | zkus jiné slovo nebo hledání podle suroviny |
 | Překlad: limit (HTTP 429) | vyčerpaný limit Gemini | počkej, nebo nech překlad na DeepL / offline |
 | Překlad: chybí jazykový model | offline překladač nemá jazyk | ⚙️ → 📥 Stáhnout offline překladač |
 | Telefon se nepřipojí | firewall nebo jiná síť | povol port 3665, zkontroluj stejnou Wi-Fi |

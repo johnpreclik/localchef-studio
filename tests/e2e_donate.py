@@ -1,5 +1,5 @@
-"""Verze 1.5: tlačítko Donation (okno CZ/EN s Ko-fi, PayPal, Revolut + QR), výzva v hlavičce novinek a podmínek,
-hromadné stahování kolekcí je pryč."""
+"""Version 1.5: Donation button (CZ/EN window with Ko-fi, PayPal, Revolut + QR), call to action in the header of
+what's new and terms, bulk download of collections is gone."""
 import sys, os, base64
 sys.path.insert(0, os.path.dirname(__file__))
 import fakeqt; fakeqt.install()

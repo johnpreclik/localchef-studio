@@ -22,8 +22,8 @@ from pathlib import Path
 
 
 # ==========================================
-# REŽIM OFFLINE PŘEKLADAČE (spouští se jako samostatný proces: "--argos-worker vstup.json vystup.json")
-# Je úplně nahoře, aby se v něm nikdy nenačetlo Qt – jen Argos. Funguje stejně z .py i ze sestaveného .exe.
+# OFFLINE TRANSLATOR MODE (runs as a separate process: "--argos-worker in.json out.json")
+# It is at the very top so that Qt is never loaded in it – only Argos. Works the same from .py and from the built .exe.
 # ==========================================
 def app_dir() -> Path:
     if getattr(sys, "frozen", False):
@@ -47,8 +47,8 @@ def _argos_worker_main(in_path: str, out_path: str):
         if req.get("packages_dir"):
             os.environ["ARGOS_PACKAGES_DIR"] = req["packages_dir"]
         if os.name == "nt" and getattr(sys, "frozen", False):
-            # torch hledá své DLL jen ve vybraných složkách; přidáme knihovny přibalené k exe,
-            # aby nebyl potřeba nainstalovaný Microsoft Visual C++ Redistributable
+            # torch looks for its DLLs only in selected folders; add the libraries bundled with the exe,
+            # so that an installed Microsoft Visual C++ Redistributable is not needed
             base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
             for d in (base, base / "torch" / "lib", base / "ctranslate2", base / "onnxruntime" / "capi"):
                 if d.is_dir():
@@ -64,6 +64,61 @@ def _argos_worker_main(in_path: str, out_path: str):
         def installed():
             return [[x.from_code, x.to_code] for x in pkg.get_installed_packages()]
 
+        prog_path = req.get("progress_path")
+        prog = {"i": 0, "n": 0, "pair": "", "done": 0, "total": 0}
+
+        def report(**kw):
+            """Download progress for the app window (it reads it from progress.json)."""
+            if not prog_path:
+                return
+            prog.update(kw)
+            try:
+                Path(prog_path + ".tmp").write_text(json.dumps(prog), encoding="utf-8")
+                os.replace(prog_path + ".tmp", prog_path)
+            except OSError:
+                pass
+
+        def download(cand):
+            """The model is downloaded in chunks so that percent can be shown (Argos itself does not report progress)."""
+            links = list(getattr(cand, "links", None) or [])
+            if not prog_path or not links:
+                return cand.download()
+            fd, path = tempfile.mkstemp(suffix=".argosmodel", prefix="localchef_")
+            os.close(fd)
+            try:
+                from argostranslate.networking import USER_AGENT as ua
+            except Exception:
+                ua = "ArgosTranslate"                   # the model server rejects other browsers (HTTP 403)
+            err = None
+            for url in links:
+                try:
+                    rq = urllib.request.Request(url, headers={"User-Agent": ua})
+                    with urllib.request.urlopen(rq, timeout=60) as r, open(path, "wb") as f:
+                        total, done, last = int(r.headers.get("Content-Length") or 0), 0, 0.0
+                        report(done=0, total=total)
+                        while True:
+                            chunk = r.read(256 * 1024)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            done += len(chunk)
+                            if time.time() - last > 0.25:
+                                report(done=done, total=total)
+                                last = time.time()
+                        report(done=done, total=total or done)
+                    return path
+                except Exception as e:
+                    err = e
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            report(done=0, total=0)                      # without percent, but at least download the old way
+            try:
+                return cand.download()
+            except Exception as e:
+                raise RuntimeError(f"model download failed: {err}; {e}" if en else f"stažení modelu selhalo: {err}; {e}")
+
         def ensure(a, b):
             if [a, b] in installed():
                 return
@@ -76,7 +131,13 @@ def _argos_worker_main(in_path: str, out_path: str):
             cand = next((x for x in avail if x.from_code == a and x.to_code == b), None)
             if cand is None:
                 raise LookupError(f"Argos has no model {a}->{b}" if en else f"Argos nemá model {a}->{b}")
-            pkg.install_from_path(cand.download())
+            path = download(cand)
+            pkg.install_from_path(path)
+            if prog_path:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
         act = req["action"]
         if act == "status":
@@ -86,8 +147,12 @@ def _argos_worker_main(in_path: str, out_path: str):
                 ver = "?"
             res = {"version": ver, "pairs": installed(), "packages_dir": os.environ.get("ARGOS_PACKAGES_DIR", "")}
         elif act == "install":
-            for a, b in req["pairs"]:
+            have = installed()
+            todo = [list(x) for x in req["pairs"] if list(x) not in have]
+            for i, (a, b) in enumerate(todo):
+                report(i=i, n=len(todo), pair=f"{a}→{b}", done=0, total=0)
                 ensure(a, b)
+            report(i=len(todo), n=len(todo), done=0, total=0)
             res = {"pairs": installed()}
         elif act == "translate":
             s_lang, t_lang = req["src"], req["tgt"]
@@ -135,7 +200,7 @@ if __name__ == "__main__" and len(sys.argv) >= 4 and sys.argv[1] == "--argos-wor
 from bs4 import BeautifulSoup
 
 from PyQt6.QtCore import QUrl, Qt, QTimer, QMarginsF, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QPageLayout, QPageSize, QPixmap, QImage, QAction, QActionGroup, QTextDocument, QPdfWriter
+from PyQt6.QtGui import QFont, QPageLayout, QPageSize, QPixmap, QImage, QAction, QActionGroup, QTextDocument, QPdfWriter, QDesktopServices
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLineEdit, QTreeWidget, QTreeWidgetItem, QSplitter,
@@ -155,13 +220,13 @@ except ImportError:
     HAS_DEEPL = False
 
 # ==========================================
-# LOKALIZACE ROZHRANÍ (UI DICTIONARY)
+# UI LOCALISATION (UI DICTIONARY)
 # ==========================================
-# Název aplikace (do 1.1 „Cookidoo & Monsieur Cuisine Studio“ – přejmenováno, aby nepoužíval cizí ochranné známky).
-# Verze je i v názvu souboru (localchef_studio_vX.Y.py) – při nové verzi soubor přejmenuj (git mv).
+# App name (until 1.1 “Cookidoo & Monsieur Cuisine Studio” – renamed so it does not use other companies' trademarks).
+# The version is also in the file name (localchef_studio_vX.Y.py) – rename the file for a new version (git mv).
 APP_NAME = "LocalChef Studio"
 APP_TAGLINE = {"cs": "offline kuchařka a průvodce vařením s robotem", "en": "Offline Cookbook & Kitchen Robot Guide"}
-APP_VERSION = "1.5"
+APP_VERSION = "1.6"
 
 UI_TEXTS = {
     "cs": {
@@ -269,26 +334,69 @@ UI_TEXTS = {
 }
 
 # ==========================================
-# PŘEKLAD ROZHRANÍ PRO TEXTY MIMO UI_TEXTS (dialogy, hlášky, mobil)
-# Klíč = český text, hodnota = anglický. tx("…", n=5) doplní proměnné.
+# TRANSLATION OF UI TEXTS OUTSIDE UI_TEXTS (dialogs, messages, phone)
+# Key = Czech text, value = English. tx("…", n=5) fills in the variables.
 # ==========================================
 EN_UI = {
+    # saving a recipe (1.6)
+    "Ukládání receptu": "Saving a recipe",
+    "Recept se právě ukládá – počkej, až to doběhne.": "A recipe is being saved right now – wait until it finishes.",
+    "⏳ Ukládám recept…": "⏳ Saving the recipe…",
+    # updates from GitHub (1.6)
+    "Aktualizace": "Update",
+    "🔄 Zkontrolovat aktualizace": "🔄 Check for updates",
+    "🔄 Hledám novou verzi…": "🔄 Looking for a new version…",
+    "Máš nejnovější verzi ({v}).": "You have the latest version ({v}).",
+    "Novou verzi se nepodařilo zjistit:\n\n{err}": "Could not check for a new version:\n\n{err}",
+    "Na GitHubu je k dispozici nová verze {new} (máš {cur}).\n\nStáhnout a nainstalovat?":
+        "A new version {new} is available on GitHub (you have {cur}).\n\nDownload and install it?",
+    "Na GitHubu je k dispozici nová verze {new} (máš {cur}).\n\nOtevřít stránku ke stažení?":
+        "A new version {new} is available on GitHub (you have {cur}).\n\nOpen the download page?",
+    "Aplikace se zavře, nainstaluje se nová verze a znovu se spustí. Recepty a nastavení zůstanou.":
+        "The app closes, the new version is installed and the app starts again. Recipes and settings stay.",
+    "Tuto verzi přeskočit": "Skip this version",
+    "⬇️ Stahuji LocalChef Studio {v}…": "⬇️ Downloading LocalChef Studio {v}…",
+    "⬇️ Stahuji novou verzi…": "⬇️ Downloading the new version…",
+    "Vydání nemá instalátor pro Windows.": "The release has no Windows installer.",
+    "Stažený instalátor je neúplný ({got} z {want} B).": "The downloaded installer is incomplete ({got} of {want} B).",
+    "Stažený instalátor nesouhlasí s kontrolním součtem na GitHubu.": "The downloaded installer does not match the checksum on GitHub.",
+    "Instalátor nejde spustit:\n\n{err}\n\nSpusť ho ručně: {path}": "The installer cannot be started:\n\n{err}\n\nRun it by hand: {path}",
+    # offline translator download (progress window, 1.6)
+    "📥 Stahuje se offline překladač…": "📥 Downloading the offline translator…",
+    "📥 Stahuje se offline překladač… {p} %": "📥 Downloading the offline translator… {p} %",
+    "Překlad receptů pak funguje i bez internetu a bez API klíčů. Aplikaci můžeš mezitím dál používat.":
+        "Recipe translation will then work without internet and without API keys. You can keep using the app meanwhile.",
+    "Připravuji stahování…": "Preparing the download…",
+    "Příště nestahovat automaticky": "Don’t download automatically next time",
+    "Zrušit": "Cancel",
+    "Skrýt": "Hide",
+    "Okno se zavře a stahování poběží dál na pozadí.": "The window closes and the download continues in the background.",
+    "Ruším stahování…": "Cancelling the download…",
+    "Zavřít": "Close",
+    "Instaluji knihovnu argostranslate (pip)… {s} s": "Installing the argostranslate library (pip)… {s} s",
+    "✅ Offline překladač je připravený.": "✅ The offline translator is ready.",
+    "Stažené modely: {have}": "Downloaded models: {have}",
+    "Zjišťuji, co je potřeba stáhnout… {s} s": "Checking what needs to be downloaded… {s} s",
+    "Stahování bylo zrušeno.": "The download was cancelled.",
+    "❌ Stažení se nepodařilo.": "❌ The download failed.",
+    "Jazykový model {pair} ({k}/{n}) · {mb}": "Language model {pair} ({k}/{n}) · {mb}",
+    "Instaluji jazykové modely…": "Installing language models…",
     # QR
     "QR kód pro přístup z mobilu / tabletu": "QR code for phone / tablet access",
     "Naskenuj QR kód fotoaparátem v mobilu:": "Scan the QR code with your phone camera:",
     "Nelze stáhnout QR kód (chybí internet pro API).\nOpiš adresu ručně.": "Cannot download the QR code (no internet for the API).\nType the address manually.",
-    # levý panel
+    # left panel
     "📚 Moje Offline Kuchařka": "📚 My Offline Cookbook",
     "Přepnout styl ikon před recepty": "Switch the icon style shown in front of recipes",
     "Rozbalit všechny kategorie": "Expand all categories",
     "Sbalit všechny kategorie": "Collapse all categories",
-    # horní lišta
+    # top bar
     "Přeložit znovu – smaže uložený překlad tohoto jazyka a přeloží recept i kartu znovu":
         "Translate again – deletes the saved translation for this language and translates the recipe and card again",
     "📥 Stáhnout offline překladač": "📥 Download offline translator",
     "Stav offline překladače (Argos Translate) a stažení jazykových modelů pro překlad bez internetu a bez klíčů":
         "Offline translator status (Argos Translate) and download of language models for translating without internet or API keys",
-    # klíče
+    # keys
     "DeepL API klíč": "DeepL API key",
     "Zadej svůj DeepL API klíč (volitelná záloha pro překlady):": "Enter your DeepL API key (optional fallback for translations):",
     "Uloženo": "Saved",
@@ -297,7 +405,7 @@ EN_UI = {
     "Zadej bezplatný Gemini API klíč (z aistudio.google.com) pro překlady receptů\na obousměrnou AI konverzi TM6 <-> Monsieur Cuisine.\nPokud necháš prázdné, použije se offline překladač (je-li nainstalován) a vestavěný konvertor:":
         "Enter a free Gemini API key (from aistudio.google.com) for recipe translations\nand two-way AI conversion TM6 <-> Monsieur Cuisine.\nLeave empty to use the offline translator (if installed) and the built-in converter:",
     "Nastavení Gemini klíče bylo uloženo.": "The Gemini key setting was saved.",
-    # offline překladač
+    # offline translator
     "Offline překladač": "Offline translator",
     "offline překladač": "offline translator",
     "Offline překladač (Argos Translate) není nainstalovaný.\n\nInstalace (jednorázově, stáhne i větší knihovny):\n    py -m pip install argostranslate\n\nPotom aplikaci restartuj a tady stáhni jazyky.":
@@ -314,7 +422,7 @@ EN_UI = {
     "📥 Stahuji jazykové modely…": "📥 Downloading language models…",
     "Stažení se nepodařilo:\n\n{err}": "The download failed:\n\n{err}",
     "✅ Hotovo. Stažené modely: {have}\n\nPřeklad teď funguje i bez internetu.": "✅ Done. Downloaded models: {have}\n\nTranslation now works without internet.",
-    # překlad
+    # translation
     "Překlad": "Translation",
     "Pro překlad je potřeba jedna z možností:\n\n• ✨ Gemini AI klíč (zdarma z aistudio.google.com) – nejlepší kvalita\n• offline překladač: py -m pip install argostranslate – pak v ⚙️ → 📥 Stáhnout offline překladač stáhni jazyky\n  (potom funguje bez klíče i bez internetu)":
         "Translation needs one of these:\n\n• ✨ Gemini AI key (free from aistudio.google.com) – best quality\n• offline translator: py -m pip install argostranslate – then download languages via ⚙️ → 📥 Download offline translator\n  (then it works without keys and without internet)",
@@ -329,7 +437,7 @@ EN_UI = {
     "Nejprve přepni jazyk na 🇬🇧 EN nebo 🇨🇿 CZ – přeloží se znovu ten zobrazený.":
         "First switch the language to 🇬🇧 EN or 🇨🇿 CZ – the displayed one will be translated again.",
     "Smaže uložený překlad tohoto jazyka a přeloží recept znovu": "Deletes the saved translation for this language and translates the recipe again",
-    # přehrávač
+    # player
     "Název receptu": "Recipe title",
     "KROK 1 Z X": "STEP 1 OF X",
     "🌍 Jazyk receptu:": "🌍 Recipe language:",
@@ -351,7 +459,7 @@ EN_UI = {
     "Kroky nenalezeny.": "No steps found.",
     "⏳ Připravuji konverzi pro {dev}...": "⏳ Preparing the conversion for {dev}...",
     "Chyba konverze": "Conversion error",
-    # ukládání / kategorie
+    # saving / categories
     "Otevři detail": "Open a recipe",
     "Nejprve na Cookidoo rozklikni konkrétní recept.": "First open a specific recipe on Cookidoo.",
     "Nejprve na Monsieur-Cuisine.com rozklikni konkrétní recept.": "First open a specific recipe on Monsieur-Cuisine.com.",
@@ -370,7 +478,7 @@ EN_UI = {
     "Uloženo do:\n{path}": "Saved to:\n{path}",
     "Chyba": "Error",
     "Nastala chyba, aplikace ale běží dál:\n\n{err}\n\nPodrobnosti: {log}": "An error occurred, but the app keeps running:\n\n{err}\n\nDetails: {log}",
-    # mobil – hlášky ze serveru
+    # phone – messages from the server
     "⚠️ Překladač není nastaven – v desktopové aplikaci zadej ✨ Gemini klíč nebo nainstaluj argostranslate. Zobrazuji originál.":
         "⚠️ No translator is set up – enter a ✨ Gemini key in the desktop app or install argostranslate. Showing the original.",
     "❌ Překlad selhal: {err} – zobrazuji originál.": "❌ Translation failed: {err} – showing the original.",
@@ -380,7 +488,7 @@ EN_UI = {
     "🔄 Zkusit znovu": "🔄 Try again",
     "⏳ Překládám kartu do {lang}…": "⏳ Translating the card to {lang}…",
     "Stránka se obnoví sama ({s} s).": "The page refreshes by itself ({s} s).",
-    # chyby překladu
+    # translation errors
     "vyčerpán limit bezplatných dotazů (HTTP 429) – zkus to za chvíli": "free request limit reached (HTTP 429) – try again in a moment",
     "klíč byl odmítnut ({txt}) – zkontroluj ✨ Gemini klíč": "the key was rejected ({txt}) – check the ✨ Gemini key",
     "model nenalezen (HTTP 404) – v config.json nastav platný \"gemini_model\"": "model not found (HTTP 404) – set a valid \"gemini_model\" in config.json",
@@ -390,14 +498,14 @@ EN_UI = {
     "offline překladač nestihl odpovědět včas": "the offline translator did not respond in time",
     "offline překladač spadl (kód {code})": "the offline translator crashed (code {code})",
     "Překladač nevrátil výsledek (zkontroluj Gemini klíč nebo instalaci argostranslate).": "The translator returned no result (check the Gemini key or the argostranslate installation).",
-    # v12: nové rozhraní, PDF, hromadný překlad, kategorie, hledání
+    # v12: new interface, PDF, bulk translation, categories, search
     "Hotovo: přeloženo {ok} z {t}.": "Done: translated {ok} of {t}.",
     "➕ Nová kategorie": "➕ New category",
     "Založit novou kategorii (vybraný recept do ní můžeš rovnou přesunout)": "Create a new category (you can move the selected recipe into it right away)",
     "V jakém jazyce ukazovat názvy receptů (přeložený název je k dispozici po překladu receptu)": "Language of recipe names in the list (a translated name is available once the recipe has been translated)",
     "⚙️ Nastavení": "⚙️ Settings",
     "❓ Návod": "❓ How to use",
-    # offline překladač – kontrola při startu
+    # offline translator – check at start
     "ANO": "YES",
     "NE": "NO",
     "Příště se již neptat": "Don’t ask again",
@@ -416,7 +524,7 @@ EN_UI = {
     "Offline překladač (Argos Translate) není nainstalovaný.\n\nNainstalovat ho teď i s jazykovými modely? Jednorázově se stáhnou knihovny a modely (zhruba 1–2 GB), potřebuje to internet a pár minut.":
         "The offline translator (Argos Translate) is not installed.\n\nInstall it now together with the language models? "
         "Libraries and models are downloaded once (about 1–2 GB); it needs internet and a few minutes.",
-    # záloha receptů (.7z)
+    # recipe backup (.7z)
     "Chybí knihovna py7zr (py -m pip install py7zr).": "The py7zr library is missing (py -m pip install py7zr).",
     "Export potřebuje knihovnu py7zr:\n\n    py -m pip install py7zr\n\nPotom aplikaci restartuj.":
         "Export needs the py7zr library:\n\n    py -m pip install py7zr\n\nThen restart the app.",
@@ -496,16 +604,25 @@ EN_UI = {
         "No ingredients or method could be found on this page.\n\nTip: install the recipe-scrapers library (py -m pip install recipe-scrapers), it knows hundreds of recipe websites.",
     "🏠 Domů": "🏠 Home",
     "Jen video": "Video only",
-    "Tahle stránka obsahuje jen video – nejsou na ní suroviny ani postup, takže recept nejde uložit.\n\nZkus najít stejný recept jako textový (např. přes 🏠 Domů a hledání).":
-        "This page contains only a video – there are no ingredients or method, so the recipe cannot be saved.\n\nTry to find the same recipe as text (e.g. via 🏠 Home and search).",
+    "Tahle stránka je video recept – postup receptu je jen ve videu, ne v textu, takže recept nejde uložit.\n\nZkus najít stejný recept jako textový (např. přes 🏠 Domů a hledání).":
+        "This page is a video recipe – the method is only in the video, not in the text, so the recipe cannot be saved.\n\nTry to find the same recipe as text (e.g. via 🏠 Home and search).",
 }
 
-# Výchozí kategorie aplikace – v DB zůstávají česky, jen se jinak zobrazí.
+# The app's default categories – they stay Czech in the DB, only their display differs.
 CATEGORY_EN = {
     "Nezařazené": "Uncategorized", "Hlavní jídla": "Main dishes", "Polévky": "Soups",
     "Pečení & Dezerty": "Baking & Desserts", "Omáčky": "Sauces", "Cizojazyčné": "Foreign-language",
     "Kolekce": "Collection",
+    "Snídaně": "Breakfast", "Svačiny": "Snacks", "Předkrmy": "Starters", "Saláty": "Salads", "Obědy": "Lunches",
+    "Večeře": "Dinners", "Přílohy": "Side dishes", "Pomazánky a dipy": "Spreads & dips", "Pečivo": "Bread & pastry",
+    "Sladkosti a dezerty": "Sweets & desserts", "Nápoje": "Drinks", "Nealkoholické koktejly": "Non-alcoholic cocktails",
+    "Alkoholické koktejly": "Cocktails", "Zavařování": "Preserving",
 }
+# Offered when a recipe is saved or moved (1.6). Categories already used in the cookbook are offered too, and a new
+# recipe is preselected into the category of its website (site_info()["category"]).
+DEFAULT_CATEGORIES = ["Nezařazené", "Snídaně", "Svačiny", "Předkrmy", "Polévky", "Saláty", "Obědy", "Večeře",
+                      "Hlavní jídla", "Přílohy", "Omáčky", "Pomazánky a dipy", "Pečivo", "Sladkosti a dezerty",
+                      "Nápoje", "Nealkoholické koktejly", "Alkoholické koktejly", "Zavařování"]
 
 _UI_STATE = {"lang": "cs"}
 
@@ -524,7 +641,7 @@ def tx(text: str, **kw) -> str:
 
 
 def txl(text: str, lang: str, **kw) -> str:
-    """Jako tx(), ale pro zadaný jazyk (mobil si volí jazyk sám, nezávisle na počítači)."""
+    """Like tx(), but for a given language (the phone picks its language itself, independent of the computer)."""
     s = EN_UI.get(text, text) if lang == "en" else text
     return s.format(**kw) if kw else s
 
@@ -541,9 +658,9 @@ def cat_from_label(label: str) -> str:
 
 
 def _data_dir_beside_app() -> Path:
-    """Datová složka vedle programu. Do verze 1.2 se jmenovala cookidoo_data – při prvním startu se přejmenuje
-    a cesty v catalog.db se přepíšou (recepty, nastavení i přihlášení zůstanou). Když to nejde (složku drží jiný
-    program), použije se stará složka."""
+    """Data folder next to the program. Until version 1.2 it was called cookidoo_data – on first start it is renamed
+    and the paths in catalog.db are rewritten (recipes, settings and logins stay). When that is not possible (another
+    program holds the folder), the old folder is used."""
     new, old = app_dir() / "localchef_data", app_dir() / "cookidoo_data"
     if new.exists() or not old.is_dir():
         return new
@@ -576,8 +693,8 @@ def _dir_writable(d: Path) -> bool:
 
 
 def _data_dir() -> Path:
-    """Data jsou vedle programu (přenosné, i u exe). Když tam zapisovat nejde – program nainstalovaný do
-    Program Files nebo na disk jen pro čtení – použije se %LOCALAPPDATA%/LocalChef Studio/localchef_data."""
+    """Data live next to the program (portable, also for the exe). When it cannot be written there – the program is
+    installed in Program Files or on a read-only drive – %LOCALAPPDATA%/LocalChef Studio/localchef_data is used."""
     d = _data_dir_beside_app()
     if _dir_writable(d):
         return d
@@ -602,7 +719,7 @@ for d in (BASE_DIR, SESSION_DIR, CACHE_DIR, RECIPES_DIR, PDF_DIR):
 
 
 def resolve_recipe_folder(path_str) -> Path:
-    """DB ukládá absolutní cesty. Po přenesení na jiný disk/počítač (nebo do exe) se složka dohledá podle názvu."""
+    """The DB stores absolute paths. After moving to another drive/computer (or into the exe) the folder is found by its name."""
     p = Path(path_str or "")
     if p.exists():
         return p
@@ -630,7 +747,7 @@ APP_LOG = BASE_DIR / "app.log"
 
 
 def log(msg: str):
-    """Bezpečný výpis: na Windows konzoli neshodí aplikaci kvůli znakům jako →, a zapisuje i do app.log."""
+    """Safe print: on a Windows console characters like → do not crash the app; also writes to app.log."""
     line = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
     try:
         print(line)
@@ -644,6 +761,178 @@ def log(msg: str):
             f.write(line + "\n")
     except Exception:
         pass
+
+
+# ==========================================
+# EXPLICIT STATE MACHINES
+# Every multi-step flow of the app (start, downloads, translation jobs, web search, saving a recipe…) keeps its
+# state in one StateMachine instead of loose flags. States are plain strings (str-based Enum members work too), the
+# allowed transitions are a table checked at construction, and every transition goes to app.log as
+# "[stav] <name>: <old> → <new>". A forbidden transition is logged and refused, never raised: PyQt6 would quit the
+# whole app on an exception in a slot. Listeners run in the thread that made the transition – they must not touch
+# Qt widgets (GUI code reads the state from a QTimer or gets it through a Qt signal).
+# ==========================================
+_MACHINES = None          # weakref.WeakSet of every live machine, for machines_snapshot() (created lazily)
+
+
+def _state_name(s) -> str:
+    return str(getattr(s, "value", s))
+
+
+class StateMachine:
+    """A named state machine: states, allowed transitions, data that belongs to the current run, history.
+
+    transitions = {"idle": {"checking"}, "checking": {"offer", "idle"}, …}; every target must be a key as well
+    (use an empty set for a final state). go() returns False and logs a forbidden transition instead of raising."""
+
+    def __init__(self, name: str, transitions: dict, initial, log_transitions: bool = True, history: int = 50):
+        import collections
+        import weakref
+        global _MACHINES
+        self.name = name
+        self.transitions = {_state_name(k): frozenset(_state_name(x) for x in v) for k, v in transitions.items()}
+        unknown = {t for targets in self.transitions.values() for t in targets} - set(self.transitions)
+        if unknown or _state_name(initial) not in self.transitions:
+            raise ValueError(f"{name}: unknown states {sorted(unknown) or [_state_name(initial)]}")
+        self.initial = _state_name(initial)
+        self._state = self.initial
+        self.data: dict = {}
+        self.log_transitions = log_transitions
+        self.history = collections.deque(maxlen=history)
+        self._listeners: list = []
+        self._lock = threading.RLock()
+        if _MACHINES is None:
+            _MACHINES = weakref.WeakSet()
+        _MACHINES.add(self)
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    def is_in(self, *states) -> bool:
+        return self._state in {_state_name(s) for s in states}
+
+    def can(self, new) -> bool:
+        return _state_name(new) in self.transitions[self._state]
+
+    def go(self, new, **data) -> bool:
+        """Moves to `new` if the table allows it and merges `data` into self.data. False = forbidden, nothing changed."""
+        new = _state_name(new)
+        with self._lock:
+            old = self._state
+            if new not in self.transitions.get(old, ()):
+                log(f"[stav] {self.name}: nepovolený přechod {old} → {new} (ignoruji)")
+                return False
+            self._state = new
+            self.data.update(data)
+            self.history.append((time.time(), old, new))
+            listeners = list(self._listeners)
+        if self.log_transitions:
+            log(f"[stav] {self.name}: {old} → {new}")
+        for fn in listeners:
+            try:
+                fn(old, new, self)
+            except Exception:
+                log(f"[stav] {self.name}: posluchač přechodu {old} → {new} spadl:\n" + traceback.format_exc())
+        return True
+
+    def reset(self, **data):
+        """Back to the initial state for a new run; data are replaced, not merged. Always allowed."""
+        with self._lock:
+            old = self._state
+            self._state = self.initial
+            self.data = dict(data)
+            self.history.append((time.time(), old, self.initial))
+        if self.log_transitions and old != self.initial:
+            log(f"[stav] {self.name}: {old} → {self.initial} (reset)")
+
+    def on_change(self, fn):
+        """fn(old, new, machine) after every transition (not after reset). Returns fn, so it works as a decorator."""
+        self._listeners.append(fn)
+        return fn
+
+    def snapshot(self) -> dict:
+        """JSON-safe picture of the machine – for tests, the HTTP server and debugging."""
+        with self._lock:
+            return {"name": self.name, "state": self._state,
+                    "data": json.loads(json.dumps(self.data, default=str)),
+                    "history": [{"at": round(t, 3), "from": a, "to": b} for t, a, b in self.history]}
+
+    def to_mermaid(self) -> str:
+        """The transition table as a Mermaid diagram (for CLAUDE.md and documentation)."""
+        lines = ["stateDiagram-v2", f"    [*] --> {self.initial}"]
+        for src, targets in self.transitions.items():
+            lines += [f"    {src} --> {dst}" for dst in sorted(targets)]
+            if not targets:
+                lines.append(f"    {src} --> [*]")
+        return "\n".join(lines)
+
+    def __repr__(self):
+        return f"<StateMachine {self.name}: {self._state}>"
+
+
+def machines_snapshot() -> list[dict]:
+    """Snapshots of all live state machines, sorted by name."""
+    return sorted((m.snapshot() for m in list(_MACHINES or ())), key=lambda s: s["name"])
+
+
+JOB_FLOW = {"idle": {"running"}, "running": {"cancelling", "done", "failed", "cancelled"},
+            "cancelling": {"cancelled", "done", "failed"},
+            "done": {"running"}, "failed": {"running"}, "cancelled": {"running"}}
+
+
+class SaveFlow(StateMachine):
+    """Saving the recipe open in the built-in browser: waiting (for the page's JavaScript) → extracting → storing →
+    done / skipped (no recipe on the page) / failed. Only one save runs at a time."""
+    FLOW = {"idle": {"waiting"}, "waiting": {"extracting", "failed"}, "extracting": {"storing", "failed"},
+            "storing": {"done", "skipped", "failed"}, "done": set(), "skipped": set(), "failed": set()}
+
+    def __init__(self):
+        super().__init__("ukládání receptu", self.FLOW, "idle")
+
+    def running(self) -> bool:
+        return self.is_in("waiting", "extracting", "storing")
+
+
+class Job(StateMachine):
+    """A long-running task (download, bulk translation, one recipe translation):
+    idle → running → done / failed / cancelled, a cancel request goes through "cancelling".
+    The worker thread calls progress(**data) (no transition, no log) and finish(error); the GUI reads state and data."""
+
+    def __init__(self, name: str, log_transitions: bool = True):
+        super().__init__(name, JOB_FLOW, "idle", log_transitions=log_transitions)
+
+    @property
+    def running(self) -> bool:
+        return self.is_in("running", "cancelling")
+
+    @property
+    def cancel_requested(self) -> bool:
+        return self.is_in("cancelling")
+
+    def start(self, **data) -> bool:
+        """New run with fresh data. False when it is already running."""
+        with self._lock:
+            if self.running:
+                return False
+            self.data = {"started": time.time(), "ended": 0, "error": "", **data}
+            return self.go("running")
+
+    def progress(self, **data):
+        with self._lock:
+            self.data.update(data)
+
+    def cancel(self) -> bool:
+        """Asks the worker to stop; it sees cancel_requested and ends with finish()."""
+        return self.go("cancelling")
+
+    def finish(self, error: str = "") -> str:
+        """Ends the run: done, or failed / cancelled (cancelled when a cancel was requested). Returns the new state."""
+        with self._lock:
+            target = ("cancelled" if self.cancel_requested else "failed") if error else "done"
+            self.data.update(error=error, ended=time.time())
+            self.go(target)
+            return self._state
 
 
 def load_api_key() -> str:
@@ -729,7 +1018,7 @@ QSplitter::handle { background-color: #DADCE0; }
 
 
 def get_local_ip() -> str:
-    # V Dockeru je vlastní IP kontejneru pro telefon k ničemu → adresu počítače předá build_docker.bat
+    # In Docker the container's own IP is useless for the phone → build_docker.bat passes the computer's address
     override = os.environ.get("LOCALCHEF_LAN_HOST", "").strip()
     if override:
         return override
@@ -775,19 +1064,19 @@ def init_db():
     conn.close()
 
 
-DELETED_MARK = ".smazano"        # záložní značka, když složku nejde přesunout (např. je otevřená jinde)
-DELETED_DIR = BASE_DIR / "recipes_smazane"     # koš: smazané recepty se přesunou sem, ve recipes zůstanou jen platné
+DELETED_MARK = ".smazano"        # fallback marker when the folder cannot be moved (e.g. it is open elsewhere)
+DELETED_DIR = BASE_DIR / "recipes_smazane"     # trash: deleted recipes are moved here, only valid ones stay in recipes
 
 
 def move_recipe_to_trash(folder: Path) -> Path | None:
-    """Přesune složku receptu do localchef_data/recipes_smazane. Když to nejde, aspoň ji označí značkou."""
+    """Moves a recipe folder to localchef_data/recipes_smazane. When that is not possible, at least marks it."""
     folder = Path(folder)
     if not folder.is_dir():
         return None
     try:
         folder.resolve().relative_to(RECIPES_DIR.resolve())
     except ValueError:
-        return None                                   # mimo recipes nic nepřesouváme
+        return None                                   # nothing outside recipes is moved
     DELETED_DIR.mkdir(parents=True, exist_ok=True)
     target = DELETED_DIR / folder.name
     n = 2
@@ -808,17 +1097,17 @@ def move_recipe_to_trash(folder: Path) -> Path | None:
 
 
 def sync_catalog_from_folders() -> int:
-    """Doplní do catalog.db recepty, které leží v localchef_data/recipes, ale databáze o nich neví
-    (zkopírované od někoho jiného, ze zálohy…). Nic nepřepisuje, jen přidává. Vrátí počet přidaných."""
+    """Adds to catalog.db the recipes that are in localchef_data/recipes but unknown to the database
+    (copied from someone else, from a backup…). Overwrites nothing, only adds. Returns the number added."""
     if not RECIPES_DIR.exists():
         return 0
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     known = {r[0] for r in c.execute("SELECT recipe_id FROM recipes")}
     added = 0
-    # Recepty smazané ve starších verzích nemají značku .smazano. Při prvním startu této verze se proto
-    # složky, o kterých existující kuchařka neví, jen označí jako smazané (nevrátí se). Prázdná kuchařka
-    # (nová instalace, předaná data bez catalog.db) naopak načte všechno.
+    # Recipes deleted in older versions have no .smazano marker. On the first start of this version, folders
+    # that an existing cookbook does not know are therefore only marked as deleted (they do not come back). An empty
+    # cookbook (new install, data handed over without catalog.db) loads everything instead.
     first_sync_flag = BASE_DIR / ".catalog_sync_v1"
     mark_unknown_as_deleted = not first_sync_flag.exists() and bool(known)
     marked = 0
@@ -828,14 +1117,14 @@ def sync_catalog_from_folders() -> int:
             if not folder.is_dir() or not rj.exists():
                 continue
             if (folder / DELETED_MARK).exists():
-                move_recipe_to_trash(folder)          # dřív jen označené → teď do koše
+                move_recipe_to_trash(folder)          # previously only marked → now to the trash
                 continue
             data = json.loads(rj.read_text(encoding="utf-8"))
             rid = str(data.get("recipe_id") or "").strip()
             if not rid or rid in known:
                 continue
             if mark_unknown_as_deleted:
-                move_recipe_to_trash(folder)          # smazaný ve starší verzi → do koše
+                move_recipe_to_trash(folder)          # deleted in an older version → to the trash
                 marked += 1
                 continue
             plat = str(data.get("source_platform") or data.get("device") or "tm6").lower()
@@ -863,7 +1152,7 @@ def sync_catalog_from_folders() -> int:
 
 
 def set_title_translation(folder: Path, lang: str, title: str):
-    """Uloží přeložený název do katalogu (seznam receptů vlevo a v mobilu ho pak umí ukázat)."""
+    """Stores the translated title in the catalog (the recipe list on the left and the phone can then show it)."""
     if lang not in ("en", "cs") or not title:
         return
     try:
@@ -879,9 +1168,9 @@ def set_title_translation(folder: Path, lang: str, title: str):
 
 
 def repair_fragmented_steps() -> int:
-    """Recepty z Cookidoo uložené s kroky rozsekanými podle <nobr> („3 Sek./Stufe 5“ jako samostatný krok)
-    se opraví z uložených dat Cookidoo (_debug_api.json). Odvozené soubory (verze pro MCS, překlady receptu) se smažou
-    a při dalším otevření vzniknou znovu ze správných kroků."""
+    """Cookidoo recipes saved with steps split at <nobr> (“3 Sek./Stufe 5” as a separate step)
+    are repaired from the saved Cookidoo data (_debug_api.json). Derived files (MCS version, recipe translations) are
+    deleted and are created again from the correct steps the next time the recipe is opened."""
     fixed = 0
     if not RECIPES_DIR.exists():
         return 0
@@ -913,7 +1202,7 @@ def repair_fragmented_steps() -> int:
 
 
 def backfill_translated_titles() -> int:
-    """Názvy z už hotových překladů (recipe_en.json, recipe_cs.json…) doplní do katalogu."""
+    """Adds titles from finished translations (recipe_en.json, recipe_cs.json…) to the catalog."""
     n = 0
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -943,13 +1232,13 @@ def backfill_translated_titles() -> int:
 
 
 def search_key(text: str) -> str:
-    """Pro hledání: malá písmena a bez diakritiky (kulajda = Kulajda, svickova = svíčková)."""
+    """For searching: lower case and without accents (kulajda = Kulajda, svickova = svíčková)."""
     t = unicodedata.normalize("NFKD", str(text or "").lower())
     return "".join(ch for ch in t if not unicodedata.combining(ch))
 
 
 def set_recipe_json_field(folder: Path, key: str, value):
-    """Zapíše hodnotu (kategorie, oblíbené) i do recipe*.json, aby se přenesla s kopií složky."""
+    """Writes a value (category, favourite) also into recipe*.json, so it travels with a copy of the folder."""
     for json_file in Path(folder).glob("recipe*.json"):
         try:
             data = json.loads(json_file.read_text(encoding="utf-8"))
@@ -959,12 +1248,42 @@ def set_recipe_json_field(folder: Path, key: str, value):
             log(f"Zápis {key} do {json_file.name} selhal: {e}")
 
 
-def get_recipe_icon_prefix(source_platform: str, is_fav: bool, icon_style: str) -> str:
+# Every website has its own icon colour and default category (1.6). Known sites are listed; any other site gets a
+# colour picked by its address (always the same one) and a category named after it.
+SITES = [  # (address part, name, icon, colour)
+    ("cookidoo.", "Cookidoo", "🟢", "#00A651"),
+    ("monsieur-cuisine.com", "Monsieur Cuisine", "🔵", "#1565C0"),
+    ("fresh.iprima.cz", "Prima FRESH", "🔴", "#D81B60"),
+    ("allrecipes.com", "Allrecipes", "🟠", "#F37021"),
+    ("bbcgoodfood.com", "BBC Good Food", "🟣", "#7B1FA2"),
+    ("chefkoch.de", "Chefkoch", "🟤", "#8D4E2A"),
+]
+_SPARE_SITE_STYLES = [("🟡", "#C9A000"), ("🟥", "#C62828"), ("🟧", "#E65100"), ("🟨", "#B8860B"), ("🟦", "#1E88E5"),
+                      ("🟪", "#8E24AA"), ("🟩", "#2E7D32"), ("🟫", "#6D4C41"), ("⚪", "#757575")]
+
+
+def site_info(url: str, platform: str = "") -> dict:
+    """{"name", "icon", "color", "category", "host"} of the website a recipe comes from."""
+    host = urllib.parse.urlparse(url or "").netloc.lower().split(":")[0]
+    host = host[4:] if host.startswith("www.") else host
+    plat = (platform or "").lower()
+    for part, name, icon, color in SITES:
+        if part in host or (not host and ((plat == "tm6" and name == "Cookidoo") or (plat == "mcs" and name == "Monsieur Cuisine"))):
+            return {"name": name, "icon": icon, "color": color, "category": name, "host": host}
+    if not host:
+        return {"name": "Web", "icon": "⚫", "color": "#424242", "category": "Nezařazené", "host": ""}
+    icon, color = _SPARE_SITE_STYLES[int(hashlib.sha1(host.encode()).hexdigest(), 16) % len(_SPARE_SITE_STYLES)]
+    return {"name": host, "icon": icon, "color": color, "category": host[:1].upper() + host[1:], "host": host}
+
+
+def get_recipe_icon_prefix(source_platform: str, is_fav: bool, icon_style: str, url: str = "") -> str:
     plat = (source_platform or "tm6").lower()
     if icon_style == "bots":
         plat_ic = {"mcs": "🤖", "other": "🍽️"}.get(plat, "🍲")
+    elif url or plat in ("tm6", "mcs"):
+        plat_ic = site_info(url, plat)["icon"]          # every website its own colour
     else:
-        plat_ic = {"mcs": "🔵", "other": "⚫"}.get(plat, "🟢")
+        plat_ic = "⚫"
     fav_ic = "⭐ " if is_fav else ""
     return f"{fav_ic}{plat_ic} "
 
@@ -1001,7 +1320,7 @@ def _format_num(val: float) -> str:
 
 _FRAC_CHARS = "½⅓⅔¼¾⅛⅜⅝⅞"
 _QTY = r'(\d+\s+\d+/\d+|\d+/\d+|\d+(?:[.,]\d+)?(?:\s*[½⅓⅔¼¾⅛⅜⅝⅞])?|[½⅓⅔¼¾⅛⅜⅝⅞])'
-# jednotky, u kterých se množství násobí podle dávky (hmotnost, objem, kusy, lžíce…)
+# units whose amount is multiplied by the batch factor (weight, volume, pieces, spoons…)
 _SCALE_UNITS = (r'(?:kg|dkg|mg|g|gramů|gramy|gram|gr|ml|cl|dl|l|litr\w*|lžíc\w*|lžičk\w*|hrnk\w*|hrnek|ks|kus\w*|'
                 r'stroužk\w*|plátk\w*|špetk\w*|balíč\w*|EL|TL|Prise\w*|Stück|Stk|Zehe\w*|Bund|Pck|Päckchen|'
                 r'tbsp|tsp|tablespoons?|teaspoons?|cups?|oz|lbs?|pounds?|ounces?|pieces?|cloves?|pinch(?:es)?|'
@@ -1022,8 +1341,8 @@ def _scale_match(m, factor: float) -> str:
 
 
 def scale_ingredient_line(line: str, factor: float) -> str:
-    """Vynásobí množství suroviny podle dávky. Zvládne číslo na začátku (i rozsah 2–3), číslo s jednotkou
-    kdekoli v řádku ("Mehl 200 g") a gramáž v závorce; procenta ani velikosti (vel. M) nemění."""
+    """Multiplies an ingredient amount by the batch factor. Handles a number at the start (also a range 2–3), a number
+    with a unit anywhere in the line ("Mehl 200 g") and a weight in brackets; leaves percentages and sizes (vel. M) alone."""
     if abs(factor - 1.0) < 0.01:
         return line
     s = _clean_fractions(line.strip())
@@ -1034,14 +1353,14 @@ def scale_ingredient_line(line: str, factor: float) -> str:
     else:
         s = re.sub(r'(?<![\w.,/(])' + _QTY + r'(?=\s*' + _SCALE_UNITS + r'\b)',
                    lambda m: _scale_match(m, factor), s, count=1, flags=re.IGNORECASE)
-    # gramáž v závorce: "1 balíček (250 g)"
+    # weight in brackets: "1 balíček (250 g)"
     s = re.sub(r'(?<=\()(\d+(?:[.,]\d+)?)(?=\s*(?:g|gram\w*|ml|l|kg|oz|lb)\b)',
                lambda m: _scale_match(m, factor), s, flags=re.IGNORECASE)
     return s
 
 
 def scale_step_text(html: str, factor: float) -> str:
-    """V textu kroku přepočítá jen hmotnost a objem (200 g, 0,5 l) – teploty, časy ani rychlosti se nemění."""
+    """In step text only weight and volume are rescaled (200 g, 0,5 l) – temperatures, times and speeds do not change."""
     if abs(factor - 1.0) < 0.01 or not html:
         return html
     parts = re.split(r'(<[^>]+>)', _clean_fractions(html))
@@ -1054,7 +1373,7 @@ def scale_step_text(html: str, factor: float) -> str:
 
 
 _METRIC_UNITS = [
-    # (regex jednotky, násobek, cílová jednotka)
+    # (unit regex, factor, target unit)
     (r'fl\.?\s*oz\.?|fluid\s+ounces?', 29.57, "ml"),
     (r'oz\.?|ounces?', 28.35, "g"),
     (r'lbs?\.?|pounds?', 453.6, "g"),
@@ -1082,7 +1401,7 @@ def _fmt_metric(val: float, unit: str) -> str:
 
 
 def convert_text_to_metric(text: str, html_highlight: bool = True) -> str:
-    """Imperiální jednotky → metrické (°F, oz, lb, cup, tbsp, tsp, fl oz, pint, quart, stick, inch)."""
+    """Imperial units → metric (°F, oz, lb, cup, tbsp, tsp, fl oz, pint, quart, stick, inch)."""
     if not text:
         return text
 
@@ -1095,7 +1414,7 @@ def convert_text_to_metric(text: str, html_highlight: bool = True) -> str:
 
     def repl_temp(m):
         f_val = float(m.group(1).replace(",", "."))
-        if f_val < 150:                      # 100 °F a méně v receptech prakticky není → nejspíš něco jiného
+        if f_val < 150:                      # 100 °F or less practically never appears in recipes → most likely something else
             return m.group(0)
         c_val = round((f_val - 32.0) * 5.0 / 9.0 / 5.0) * 5
         return wrap(f"{c_val} °C", m.group(0))
@@ -1129,7 +1448,7 @@ _TIME_UNIT_RE = re.compile(r'(\d+(?:[.,]\d+)?(?:\s*[-–]\s*\d+(?:[.,]\d+)?)?)\s
 
 
 def normalize_dial_time(t) -> str:
-    """Čas na „displeji“ jazykově neutrálně: '10 minut' → '10 min', '2 hodiny' → '2 h', '30 Sek.' → '30 s'."""
+    """Time on the “display”, language neutral: '10 minut' → '10 min', '2 hodiny' → '2 h', '30 Sek.' → '30 s'."""
     s = str(t or "").strip()
     if not s or s == "—":
         return "—"
@@ -1198,7 +1517,7 @@ def ensure_clean_html_snapshot(folder: Path) -> Path | None:
 
 
 def extract_tm_dials(step_text: str) -> dict:
-    clean = step_text.replace("℃", " °C").replace("℉", " °F")     # MCS píše teplotu jedním znakem „125℃“
+    clean = step_text.replace("℃", " °C").replace("℉", " °F")     # MCS writes the temperature as one character “125℃”
     for k, v in TM_SYMBOLS_MAP.items():
         clean = clean.replace(k, v)
 
@@ -1434,11 +1753,11 @@ def convert_recipe_via_gemini_api(orig_data: dict, gemini_key: str, target_devic
 
 
 # ==========================================
-# OFFLINE ASISTENT: běžný recept (z jiného webu) → kroky pro TM6 / Monsieur Cuisine bez klíče Gemini
-# Podle činnosti v kroku navrhne nastavení robota; co se v robotu dělat nedá (trouba, pánev…), označí jako ruční.
+# OFFLINE ASSISTANT: an ordinary recipe (from another website) → steps for TM6 / Monsieur Cuisine without a Gemini key
+# Suggests machine settings by the activity in the step; what cannot be done in the machine (oven, pan…) is marked manual.
 # ==========================================
 _ASSIST_RULES = [
-    # (klíč, regex činnosti cs/en/de/pl, TM6 nastavení, MCS nastavení)  – {t} = čas z textu kroku
+    # (key, activity regex cs/en/de/pl, TM6 settings, MCS settings)  – {t} = time from the step text
     ("manual", r"troub|pečt|peč[eí]|zapéct|grilu|pánv|pánev|smaž|fritov|oven|bake|roast(?:ing)? in|grill|frying pan|skillet|pan-fr|deep[- ]fr|backofen|backen|pfanne|braten in|grillen|piekarnik|piec|patelni|chlad|lednic|refrigerat|chill|fridge|kühlschrank|servír|podáv|serve|servieren|ozdob|garnish",
      None, None),
     ("knead", r"hněť|hnět|uhněť|knead|kneten|zagnie", ("2 min", "—", "🌾 Těsto"), ("2 min", "—", "Program Hnětení")),
@@ -1475,8 +1794,8 @@ def _assist_lang(v: str, lang: str) -> str:
 
 
 def assist_step(text: str, device: str, lang: str = "cs") -> tuple[str, dict, str]:
-    """Jeden krok běžného receptu → (html s návrhem, displeje robota, druh kroku).
-    Když krok obsahuje dvě činnosti (např. nasekat a pak orestovat), navrhne obě po sobě."""
+    """One step of an ordinary recipe → (html with the suggestion, machine displays, kind of step).
+    When the step holds two activities (e.g. chop and then sauté), it suggests both in turn."""
     t = text or ""
     low = t.lower()
     L = _ASSIST_TXT["en" if lang == "en" else "cs"]
@@ -1489,7 +1808,7 @@ def assist_step(text: str, device: str, lang: str = "cs") -> tuple[str, dict, st
             hits.append((m.start(), r))
     machine = sorted([h for h in hits if h[1][0] != "manual"], key=lambda h: h[0])
     manual = any(h[1][0] == "manual" for h in hits)
-    # „mix/přidej“ je jen obecné – když je v kroku jiná činnost, má přednost ona
+    # “mix/add” is only generic – when the step has another activity, that one wins
     if len(machine) > 1:
         machine = [h for h in machine if h[1][0] != "mix"] or machine
     if not machine or (manual and all(h[1][0] == "mix" for h in machine)):
@@ -1509,8 +1828,7 @@ def assist_step(text: str, device: str, lang: str = "cs") -> tuple[str, dict, st
 
 
 def assist_convert_recipe(orig_data: dict, device: str) -> dict:
-    lang = orig_data.get("language") or guess_lang([orig_data.get("title", "")] + list(orig_data.get("ingredients", [])) +
-                                                   [s.get("text", "") for s in orig_data.get("steps", [])])
+    lang = recipe_source_lang(orig_data)
     ui = "cs" if lang == "cs" else "en"
     steps = []
     for st in orig_data.get("steps", []):
@@ -1547,7 +1865,7 @@ def ensure_device_recipe_file(folder: Path, target_device: str) -> Path | None:
             made_by = json.loads(converted_path.read_text(encoding="utf-8")).get("converted_by", "")
         except Exception:
             made_by = ""
-        # převod udělaný offline (bez klíče) se po zadání klíče Gemini jednou vylepší
+        # a conversion made offline (without a key) is improved once after a Gemini key is entered
         if not (gemini_key and made_by in ("offline", "offline-assistant")):
             return converted_path
 
@@ -1560,7 +1878,7 @@ def ensure_device_recipe_file(folder: Path, target_device: str) -> Path | None:
                 else:
                     ai_payload["fine_steps"] = convert_fine_steps_for_device(get_fine_steps(orig_data), target_device)
                 ai_payload["converted_by"] = "gemini"
-                for f in folder.glob(f"{converted_path.stem}_*.json"):      # staré překlady převodu
+                for f in folder.glob(f"{converted_path.stem}_*.json"):      # old translations of the conversion
                     f.unlink()
                 converted_path.write_text(json.dumps(ai_payload, ensure_ascii=False, indent=2), encoding="utf-8")
                 return converted_path
@@ -1621,7 +1939,7 @@ def get_base_prefix_for_device(folder: Path, target_device: str) -> str:
 
 
 # ==========================================
-# PŘEKLAD: DeepL (je-li klíč) → Gemini (je-li klíč) → Argos (offline) + mezipaměť vět
+# TRANSLATION: DeepL (with a key) → Gemini (with a key) → Argos (offline) + sentence cache
 # ==========================================
 LANG_NAMES = {"cs": "Czech", "en": "English", "de": "German", "pl": "Polish", "fr": "French", "es": "Spanish", "it": "Italian"}
 GEMINI_MODEL_DEFAULT = "gemini-2.5-flash"
@@ -1638,7 +1956,7 @@ def _ph_decode(s: str) -> str:
 
 
 def _piecewise(fn, strings: list[str]) -> list[str]:
-    """Pro překladače, které neumí zachovat značky: přeloží jen části mezi značkami ⟦n⟧."""
+    """For translators that cannot keep markers: translates only the parts between ⟦n⟧ markers."""
     pieces = [_PH_SPLIT_RE.split(s) for s in strings]
     todo = sorted({x for parts in pieces for x in parts if x and not _PH_SPLIT_RE.fullmatch(x) and _LETTER_RE.search(x)})
     done = dict(zip(todo, fn(todo))) if todo else {}
@@ -1659,17 +1977,57 @@ def translation_available() -> bool:
     return bool(load_gemini_key()) or has_argos() or (HAS_DEEPL and bool(load_api_key()))
 
 
-def guess_lang(texts: list[str]) -> str:
-    s = " ".join(t for t in texts if t)[:5000].lower()
-    scores = {
-        "cs": len(re.findall(r'[řěů]', s)) * 3 + len(re.findall(r'\b(vložte|přidejte|minut|nádoby|rychlost)\b', s)) * 3,
-        "de": len(re.findall(r'[äöüß]', s)) * 2 + len(re.findall(r'\b(und|die|der|mit|zugeben|stufe)\b', s)) * 3,
-        "pl": len(re.findall(r'[ąęłńśźż]', s)) * 3 + len(re.findall(r'\b(dodaj|się|obroty)\b', s)) * 3,
+def _lang_scores(texts: list[str]) -> dict:
+    s = " ".join(t for t in texts if t)[:6000].lower()
+    return {
+        "cs": len(re.findall(r'[řěůťďň]', s)) * 3 + len(re.findall(r'[čšž]', s)) +
+              len(re.findall(r'\b(vložte|přidejte|minut|minuty|nádoby|rychlost|nakrájejte|promíchejte|osolte|lžíce|lžička|'
+                             r'hrnec|pánev|cibule|nebo|podle|potom|poté|dejte|vaříme|přidáme|asi|až|také|který|která)\b', s)) * 3,
+        "de": len(re.findall(r'[äöüß]', s)) * 2 + len(re.findall(r'\b(und|die|der|mit|zugeben|stufe|nach|eine|einen|oder)\b', s)) * 3,
+        "pl": len(re.findall(r'[ąęłńśźż]', s)) * 3 + len(re.findall(r'\b(dodaj|się|obroty|oraz|łyżka)\b', s)) * 3,
         "fr": len(re.findall(r'\b(et|les|des|ajoutez|vitesse)\b', s)) * 3,
-        "en": len(re.findall(r'\b(and|the|with|add|speed)\b', s)) * 3,
+        "en": len(re.findall(r'\b(and|the|with|add|speed|until|into|minutes|cup|cups|bowl|stir|heat|oven|large|then)\b', s)) * 3,
     }
+
+
+def guess_lang(texts: list[str]) -> str:
+    scores = _lang_scores(texts)
     best = max(scores, key=scores.get)
     return best if scores[best] > 0 else "en"
+
+
+def norm_lang(code) -> str:
+    """'cs-CZ' / 'en_GB' / 'CS' → 'cs'."""
+    return re.split(r'[-_]', str(code or "").strip().lower())[0][:3]
+
+
+def recipe_source_lang(data: dict) -> str:
+    """The recipe's language from its text. The language given by the website ("language") only counts when the text
+    does not contradict it – pages often get it wrong (a Czech recipe tagged en-US) and Czech would then be
+    “translated” into Czech."""
+    steps = data.get("steps", []) or []
+    texts = ([data.get("title", "")] + list(data.get("ingredients", []) or []) +
+             [_plain(s.get("html")) or s.get("text", "") for s in steps if isinstance(s, dict)])
+    scores = _lang_scores(texts)
+    ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+    best, second = ranked[0], ranked[1]
+    sure = best[1] >= 6 and best[1] >= 2 * second[1]
+    meta = norm_lang(data.get("language"))
+    if sure:
+        return best[0]
+    return meta or (best[0] if best[1] > 0 else "en")
+
+
+def recipe_already_in(folder: Path, device: str, lang: str) -> bool:
+    """Is the recipe already in language lang (then it is not translated, only copied)? Errors → False (translate as before)."""
+    try:
+        for name in (f"{get_base_prefix_for_device(folder, device)}.json", "recipe.json"):
+            f = Path(folder) / name
+            if f.exists():
+                return recipe_source_lang(json.loads(f.read_text(encoding="utf-8"))) == lang
+    except Exception as e:
+        log(f"Jazyk receptu {folder} nejde zjistit: {e}")
+    return False
 
 
 def _gemini_translate(strings: list[str], target_lang: str, key: str) -> list[str]:
@@ -1715,29 +2073,54 @@ def _argos_python() -> str:
     return exe
 
 
-def argos_call(req: dict, timeout: int) -> dict:
-    """Spustí offline překladač v samostatném procesu (z .py i z .exe). Když spadne, vrátí se jen chyba."""
+def argos_call(req: dict, timeout: int, progress=None) -> dict:
+    """Runs the offline translator in a separate process (from .py and from .exe). If it crashes, only an error comes back.
+    progress(state) is called about three times a second with the download progress (or None); if it returns False,
+    the process is killed."""
     req = dict(req, ui=ui_lang())
     if getattr(sys, "frozen", False):
         ARGOS_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
-        req["packages_dir"] = str(ARGOS_PACKAGES_DIR)     # u exe: jazykové modely vedle programu → přenosné
-    flags = 0x08000000 if os.name == "nt" else 0         # CREATE_NO_WINDOW – žádné blikající okno konzole
+        req["packages_dir"] = str(ARGOS_PACKAGES_DIR)     # exe: language models next to the program → portable
+    flags = 0x08000000 if os.name == "nt" else 0         # CREATE_NO_WINDOW – no flashing console window
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     with tempfile.TemporaryDirectory(prefix="cc_argos_") as td:
-        inp, outp = Path(td) / "req.json", Path(td) / "res.json"
+        inp, outp, progp = Path(td) / "req.json", Path(td) / "res.json", Path(td) / "progress.json"
+        if progress is not None:
+            req["progress_path"] = str(progp)
         inp.write_text(json.dumps(req, ensure_ascii=False), encoding="utf-8")
         if getattr(sys, "frozen", False):
             cmd = [sys.executable, "--argos-worker", str(inp), str(outp)]
         else:
             cmd = [_argos_python(), "-X", "utf8", str(Path(__file__).resolve()), "--argos-worker", str(inp), str(outp)]
         try:
-            proc = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=flags, env=env, cwd=str(app_dir()))
+            if progress is None:
+                proc = subprocess.run(cmd, capture_output=True, timeout=timeout, creationflags=flags, env=env, cwd=str(app_dir()))
+                err_raw = proc.stderr or b""
+            else:
+                errp = Path(td) / "stderr.txt"
+                t0 = time.time()
+                with open(errp, "wb") as ef:
+                    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=ef, creationflags=flags, env=env, cwd=str(app_dir()))
+                    while proc.poll() is None:
+                        time.sleep(0.3)
+                        try:
+                            data = json.loads(progp.read_text(encoding="utf-8"))
+                        except Exception:
+                            data = None
+                        late = time.time() - t0 > timeout
+                        if progress(data) is False or late:
+                            proc.kill()
+                            proc.wait()
+                            if late:
+                                raise subprocess.TimeoutExpired(cmd, timeout)
+                            raise RuntimeError(tx("Stahování bylo zrušeno."))
+                err_raw = errp.read_bytes()
         except subprocess.TimeoutExpired:
             raise RuntimeError(tx("offline překladač nestihl odpovědět včas"))
         except OSError as e:
             raise RuntimeError(f"{tx('Offline překladač')}: {e}")
         if not outp.exists():
-            err = (proc.stderr or b"").decode("utf-8", "replace")
+            err = err_raw.decode("utf-8", "replace")
             log(f"Offline překladač skončil bez výsledku (kód {proc.returncode}):\n{err[-4000:]}")
             lines = [ln for ln in err.strip().splitlines() if ln.strip()]
             raise RuntimeError(tx("offline překladač spadl (kód {code})", code=proc.returncode) + (f": {lines[-1]}" if lines else ""))
@@ -1749,7 +2132,7 @@ def argos_call(req: dict, timeout: int) -> dict:
 
 
 def offline_translator_state() -> dict:
-    """Je offline překladač nainstalovaný a má jazykové modely? {"installed": bool, "missing": [(src, tgt), …]}"""
+    """Is the offline translator installed and does it have language models? {"installed": bool, "missing": [(src, tgt), …]}"""
     if not has_argos():
         return {"installed": False, "missing": list(OFFLINE_PAIRS)}
     st = argos_call({"action": "status"}, 600)
@@ -1757,13 +2140,16 @@ def offline_translator_state() -> dict:
     return {"installed": True, "missing": [pr for pr in OFFLINE_PAIRS if pr not in pairs], "pairs": pairs}
 
 
-def install_offline_translator() -> dict:
-    """Doinstaluje offline překladač: při spuštění z Pythonu knihovnu argostranslate (pip), pak chybějící jazykové
-    modely. V exe je knihovna přibalená, stahují se jen modely."""
+def install_offline_translator(progress=None) -> dict:
+    """Installs the offline translator: when running from Python the argostranslate library (pip), then the missing
+    language models. The exe bundles the library, only models are downloaded. progress as in argos_call; while the
+    library is being installed it gets {"phase": "pip"}."""
     if not has_argos():
         if getattr(sys, "frozen", False):
             raise RuntimeError(tx("V této verzi programu offline překladač chybí – stáhni novou verzi aplikace."))
         flags = 0x08000000 if os.name == "nt" else 0
+        if progress is not None:
+            progress({"phase": "pip"})
         proc = subprocess.run([_argos_python(), "-m", "pip", "install", "argostranslate"], capture_output=True,
                               timeout=3600, creationflags=flags)
         if proc.returncode != 0:
@@ -1773,8 +2159,106 @@ def install_offline_translator() -> dict:
         log("Offline překladač (argostranslate) nainstalován")
     st = offline_translator_state()
     if st["missing"]:
-        return argos_call({"action": "install", "pairs": [list(x) for x in st["missing"]]}, 3600)
+        return argos_call({"action": "install", "pairs": [list(x) for x in st["missing"]]}, 3600, progress=progress)
     return {"pairs": [list(x) for x in st.get("pairs", [])]}
+
+
+# ==========================================
+# UPDATES FROM GITHUB
+# At start (after the offline translator check) the app asks the public repository for its latest release.
+# Installed exe: download the installer, verify it, run it silently over this folder and quit (the installer
+# starts the new version again, /relaunch=1). From Python: only offer the release page. Docker: no check.
+# ==========================================
+UPDATE_REPO = "johnpreclik/localchef-studio"
+UPDATE_API = f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest"
+UPDATE_PAGE = f"https://github.com/{UPDATE_REPO}/releases/latest"
+
+
+def version_tuple(v) -> tuple:
+    """'v1.10' → (1, 10); compares versions as numbers (1.10 > 1.9)."""
+    return tuple(int(x) for x in re.findall(r"\d+", str(v or ""))[:4]) or (0,)
+
+
+def update_mode() -> str:
+    """"installer" (exe on Windows), "page" (running from Python) or "" (Docker – nothing to update in place)."""
+    if os.path.exists("/.dockerenv"):
+        return ""
+    return "installer" if getattr(sys, "frozen", False) and os.name == "nt" else "page"
+
+
+def fetch_latest_release(timeout: int = 10) -> dict:
+    """Latest release of the public repository: version, notes, page and the Windows installer asset."""
+    req = urllib.request.Request(UPDATE_API, headers={"Accept": "application/vnd.github+json",
+                                                      "User-Agent": f"LocalChef-Studio/{APP_VERSION}"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    ver = str(data.get("tag_name") or data.get("name") or "").strip().lstrip("vV")
+    assets = [a for a in data.get("assets", []) if str(a.get("name", "")).lower().endswith(".exe")]
+    exe = next((a for a in assets if a["name"] == f"LocalChef_Studio_{ver}.exe"), assets[0] if assets else None)
+    digest = str((exe or {}).get("digest") or "")
+    return {"version": ver, "name": data.get("name") or f"LocalChef Studio {ver}", "notes": data.get("body") or "",
+            "page": data.get("html_url") or UPDATE_PAGE,
+            "exe_url": (exe or {}).get("browser_download_url", ""), "exe_name": (exe or {}).get("name", ""),
+            "exe_size": int((exe or {}).get("size") or 0),
+            "sha256": digest.split(":", 1)[1].lower() if digest.lower().startswith("sha256:") else ""}
+
+
+def check_for_update(current: str = APP_VERSION) -> dict | None:
+    """The newer release, or None (no newer one, or the user skipped exactly this version)."""
+    rel = fetch_latest_release()
+    if version_tuple(rel["version"]) <= version_tuple(current):
+        return None
+    if load_config().get("update_skip_version") == rel["version"]:
+        log(f"Aktualizace {rel['version']} je k dispozici, ale uživatel tuto verzi přeskočil")
+        return None
+    return rel
+
+
+def download_update(rel: dict, progress=None) -> Path:
+    """Downloads the installer into %TEMP%\\LocalChef_update and checks size and SHA-256 (when GitHub states them).
+    progress(done, total) is called during the download; returning False cancels it."""
+    if not rel.get("exe_url"):
+        raise RuntimeError(tx("Vydání nemá instalátor pro Windows."))
+    folder = Path(tempfile.gettempdir()) / "LocalChef_update"
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / (rel.get("exe_name") or "LocalChef_Studio_update.exe")
+    part = dest.with_suffix(".part")
+    sha = hashlib.sha256()
+    req = urllib.request.Request(rel["exe_url"], headers={"User-Agent": f"LocalChef-Studio/{APP_VERSION}"})
+    with urllib.request.urlopen(req, timeout=60) as resp, open(part, "wb") as f:
+        total, done, last = int(resp.headers.get("Content-Length") or rel.get("exe_size") or 0), 0, 0.0
+        while True:
+            chunk = resp.read(512 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
+            sha.update(chunk)
+            done += len(chunk)
+            if progress and time.time() - last > 0.2:
+                last = time.time()
+                if progress(done, total) is False:
+                    raise RuntimeError(tx("Stahování bylo zrušeno."))
+        if progress:
+            progress(done, total or done)
+    try:
+        if rel.get("exe_size") and done != rel["exe_size"]:
+            raise RuntimeError(tx("Stažený instalátor je neúplný ({got} z {want} B).", got=done, want=rel["exe_size"]))
+        if rel.get("sha256") and sha.hexdigest() != rel["sha256"]:
+            raise RuntimeError(tx("Stažený instalátor nesouhlasí s kontrolním součtem na GitHubu."))
+        part.replace(dest)
+    finally:
+        if part.exists():
+            part.unlink()
+    log(f"Aktualizace stažena: {dest} ({done} B)")
+    return dest
+
+
+def installer_command(installer: Path, target: Path) -> list[str]:
+    """Silent install over the current folder (data in localchef_data stay), the installer then starts the app.
+    /CURRENTUSER or /ALLUSERS is required: without it Inno shows the install-mode question even with /SILENT.
+    A folder we cannot write to (Program Files) means an all-users install – Windows then asks for admin rights."""
+    mode = "/CURRENTUSER" if os.access(target, os.W_OK) else "/ALLUSERS"
+    return [str(installer), "/SILENT", "/SP-", mode, "/CLOSEAPPLICATIONS", "/NORESTART", f"/DIR={target}", "/relaunch=1"]
 
 
 def _argos_translate(strings: list[str], src: str, tgt: str) -> list[str]:
@@ -1803,7 +2287,7 @@ def _friendly_error(e: Exception) -> str:
 
 
 def translate_strings(strings: list[str], target_lang: str, source_lang: str) -> tuple[list[str], str]:
-    """Pořadí: DeepL (je-li klíč) → Gemini (je-li klíč) → offline překladač. Když jeden selže, zkusí další."""
+    """Order: DeepL (with a key) → Gemini (with a key) → offline translator. When one fails, the next one is tried."""
     errors = []
     if HAS_DEEPL and load_api_key():
         try:
@@ -1833,8 +2317,8 @@ _DE_WORDS = {"und", "mit", "die", "der", "das", "den", "zugeben", "stufe", "zuta
 
 
 def detect_unit_lang(text: str, default: str) -> str:
-    """Jazyk jedné věty. Karta z cookidoo.cz u německého receptu míchá české nadpisy (Suroviny, Tipy…)
-    s německým textem receptu – každá část se tak přeloží ze správného jazyka."""
+    """Language of a single sentence. A card from cookidoo.cz for a German recipe mixes Czech headings (Suroviny, Tipy…)
+    with the German recipe text – this way each part is translated from the right language."""
     low = text.lower()
     words = set(re.findall(r'[a-záčďéěíňóřšťúůýžäöüß]+', low))
     cs = len(re.findall(r'[ěščřžůťďň]', low)) * 2 + len(words & _CS_WORDS) * 2
@@ -1847,15 +2331,15 @@ def detect_unit_lang(text: str, default: str) -> str:
 
 
 # ==========================================
-# JEDNOTKY A NASTAVENÍ STROJE PŘI PŘEKLADU
-# Zkratky (TL, EL, Pck., Msp.…) se před překladem rozepíšou, aby jim překladač rozuměl, a co po překladu
-# zůstane nepřeložené, se nahradí podle tabulky. Nastavení stroje (3 Sek./Stufe 5) se sjednotí.
+# UNITS AND MACHINE SETTINGS IN TRANSLATION
+# Abbreviations (TL, EL, Pck., Msp.…) are expanded before translation so the translator understands them, and whatever
+# stays untranslated afterwards is replaced from a table. Machine settings (3 Sek./Stufe 5) are unified.
 # ==========================================
-_UNIT_EXPAND = {      # zdrojová zkratka → plné slovo (jen hned za číslem)
+_UNIT_EXPAND = {      # source abbreviation → full word (only right after a number)
     "TL": "Teelöffel", "EL": "Esslöffel", "Pck.": "Päckchen", "Pck": "Päckchen", "Pkg.": "Packung", "Msp.": "Messerspitze",
     "Stk.": "Stück", "Bd.": "Bund", "Prise": "Prise", "tsp": "teaspoon", "tbsp": "tablespoon", "Tbsp": "tablespoon",
 }
-# klíč jednotky: (regex tvarů ve všech jazycích, (en jedn., en mn.), (cs 1, cs 2–4 a zlomky, cs 5+))
+# unit key: (regex of forms in all languages, (en sing., en pl.), (cs 1, cs 2–4 and fractions, cs 5+))
 UNIT_DEFS = [
     ("tsp", r"TL|Teelöffel|tsp\.?|teaspoons?|čajov\w*\s+lžič\w*|čajových\s+lžiček|lžičk\w*|lžiček|łyżeczk\w*", ("tsp", "tsp"), ("lžička", "lžičky", "lžiček")),
     ("tbsp", r"EL|Esslöffel|tbsp\.?|Tbsp\.?|tablespoons?|polévkov\w*\s+lžíc\w*|lžíce|lžic|lžící|łyżk\w*", ("tbsp", "tbsp"), ("lžíce", "lžíce", "lžic")),
@@ -1886,7 +2370,7 @@ def _unit_form(key: str, qty_txt: str, lang: str) -> str:
 
 
 def expand_unit_abbr(text: str) -> str:
-    """Před překladem: '1 TL Zitronensaft' → '1 Teelöffel Zitronensaft' (zkratkám překladače nerozumí)."""
+    """Before translation: '1 TL Zitronensaft' → '1 Teelöffel Zitronensaft' (translators do not understand the abbreviations)."""
     def rep_(m):
         return f"{m.group(1)} {_UNIT_EXPAND.get(m.group(2), m.group(2))}"
     return _FOREIGN_ABBR_RE.sub(rep_, text)
@@ -1897,7 +2381,7 @@ _SEC_WORD = {"en": "sec", "cs": "sek"}
 
 
 def fix_translated_units(text: str, lang: str) -> str:
-    """Po překladu: zbylé zkratky jednotek → cílový jazyk, '450 g of' → '450 g', nastavení stroje jednotně."""
+    """After translation: remaining unit abbreviations → target language, '450 g of' → '450 g', uniform machine settings."""
     if lang not in ("en", "cs") or not text:
         return text
 
@@ -1909,7 +2393,7 @@ def fix_translated_units(text: str, lang: str) -> str:
     text = _FOREIGN_ABBR_RE.sub(abbr, text)
     if lang == "en":
         text = re.sub(r'(\d\s*(?:g|kg|ml|l|dl|cl|tsp|tbsp))\s+of\s+', r'\1 ', text)
-    # nastavení stroje: '100° C.' → '100°C', '/level 2' / '/stage 2' / '/úroveň 2' → '/speed 2' | '/rychlost 2'
+    # machine settings: '100° C.' → '100°C', '/level 2' / '/stage 2' / '/úroveň 2' → '/speed 2' | '/rychlost 2'
     text = re.sub(r'(\d)\s*°\s*C\.?(?=[\s/,;)]|$)', r'\1°C', text)
     text = re.sub(r'/\s*(?:Stufe|level|stage|step|speed|rychlost[i]?|úroveň|úrovni|stupeň|stupni|fáze|Fáze|Level|Stage|Speed)\s*(\d+(?:[.,]\d+)?)',
                   lambda m: f"/{_SPEED_WORD[lang]} {m.group(1)}", text)
@@ -1922,8 +2406,8 @@ def fix_translated_units(text: str, lang: str) -> str:
 
 
 class RecipeTranslator:
-    """Překládá po větách; každá věta se v receptu přeloží jen jednou (sdíleno mezi TM6/MCS verzí,
-    jemnými kroky i kartou receptu) a výsledek se pamatuje v translation_cache.json ve složce receptu."""
+    """Translates sentence by sentence; each sentence of a recipe is translated only once (shared by the TM6/MCS version,
+    detailed steps and the recipe card) and the result is remembered in translation_cache.json in the recipe folder."""
 
     def __init__(self, folder: Path, target_lang: str, source_lang: str):
         self.path = folder / "translation_cache.json"
@@ -1942,7 +2426,7 @@ class RecipeTranslator:
 
     @staticmethod
     def _units(text: str):
-        text = _INLINE_TAG_RE.sub("", text or "")      # formátovací značky by rozsekaly větu na nesmyslné kousky
+        text = _INLINE_TAG_RE.sub("", text or "")      # formatting tags would cut the sentence into meaningless pieces
         text = expand_unit_abbr(text)
         for part in _TR_SEG_RE.split(text):
             if not part:
@@ -1976,7 +2460,7 @@ class RecipeTranslator:
             groups.setdefault(detect_unit_lang(u, self.source_lang), []).append(u)
         pairs = []
         for lang, todo in groups.items():
-            if lang == self.target_lang:                 # už je v cílovém jazyce (např. české nadpisy na kartě)
+            if lang == self.target_lang:                 # already in the target language (e.g. Czech headings on the card)
                 pairs.extend((x, _ph_encode(x)) for x in todo)
                 continue
             self.sent_chars += sum(len(x) for x in todo)
@@ -1988,7 +2472,7 @@ class RecipeTranslator:
         for orig, tr_txt in pairs:
             dec = fix_translated_units(_ph_decode(tr_txt), self.target_lang)
             missing = [c for c in dict.fromkeys(re.findall(r'[\ue000-\uf8ff]', orig)) if c not in dec]
-            if missing:                                   # překladač značku ztratil → ikonu aspoň připojíme
+            if missing:                                   # the translator lost a marker → at least append the icon
                 dec = dec.rstrip() + " " + "".join(missing)
             self.cache[orig] = dec
         self.pending.clear()
@@ -2021,7 +2505,7 @@ def _block_text(el) -> str:
 
 
 def _card_targets(soup):
-    """Vrátí (bloky, samostatné texty) k překladu – jen text, žádné HTML, bez hlavičky/patičky/cookie lišty."""
+    """Returns (blocks, loose texts) to translate – text only, no HTML, without header/footer/cookie bar."""
     from bs4 import NavigableString, Comment
     body = soup.body or soup
     skip = {id(e) for e in soup.select(_CARD_SKIP)}
@@ -2069,7 +2553,7 @@ def translate_card_html(html: str, tr: "RecipeTranslator") -> str:
 
 
 def generate_translated_files(base_recipe_path: Path, target_lang: str, api_key: str | None = None, target_device: str = "tm6") -> tuple[Path | None, Path | None]:
-    if target_lang not in ("en", "cs") or not translation_available():
+    if target_lang not in ("en", "cs"):
         return None, None
 
     orig_json_path = ensure_device_recipe_file(base_recipe_path, target_device)
@@ -2084,8 +2568,9 @@ def generate_translated_files(base_recipe_path: Path, target_lang: str, api_key:
     recipe_data = json.loads(orig_json_path.read_text(encoding="utf-8"))
     steps = recipe_data.get("steps", [])
     fine = get_fine_steps(recipe_data)
-    src_lang = recipe_data.get("language") or guess_lang(
-        [recipe_data.get("title", "")] + list(recipe_data.get("ingredients", [])) + [_plain(s.get("html")) or s.get("text", "") for s in steps])
+    src_lang = recipe_source_lang(recipe_data)
+    if src_lang != target_lang and not translation_available():
+        return None, None                              # recipe in another language, but nothing to translate with
 
     tr = RecipeTranslator(base_recipe_path, target_lang, src_lang)
     need_json = not target_json.exists()
@@ -2100,7 +2585,7 @@ def generate_translated_files(base_recipe_path: Path, target_lang: str, api_key:
             tr.collect(x)
         for st in steps + fine:
             tr.collect(st.get("html") or st.get("text", ""))
-        tr.flush()                                     # jedno dávkové volání pro celý recept
+        tr.flush()                                     # one batch call for the whole recipe
 
         def tr_step(st):
             h = tr.apply(st.get("html") or st.get("text", ""))
@@ -2173,7 +2658,7 @@ def describe_translation(data: dict, ui_lang: str = "cs") -> str:
 
 
 def clear_translation(folder: Path, lang: str):
-    """Smaže uložený překlad (všechny verze receptu, kartu i zapamatované věty) → 'Přeložit znovu'."""
+    """Deletes a stored translation (all recipe versions, the card and remembered sentences) → 'Translate again'."""
     for f in list(folder.glob(f"recipe*_{lang}.json")) + [folder / f"page_snapshot_{lang}.html"]:
         try:
             f.unlink()
@@ -2191,7 +2676,7 @@ def clear_translation(folder: Path, lang: str):
                 cache_path.unlink()
 
 
-_TR_JOBS: dict = {}
+_TR_JOBS: dict = {}                      # (folder, lang, device) → Job
 _TR_JOBS_LOCK = threading.Lock()
 _FOLDER_LOCKS: dict = {}
 
@@ -2201,40 +2686,44 @@ def _job_key(folder: Path, lang: str, device: str):
 
 
 def translation_job_status(folder: Path, lang: str, device: str) -> dict:
+    """{"state": "none" | "running" | "done" | "failed", "error", "started", "ended"} – these strings are read by the
+    phone and the card wait page, keep them."""
     with _TR_JOBS_LOCK:
-        return dict(_TR_JOBS.get(_job_key(folder, lang, device), {"state": "none"}))
+        job = _TR_JOBS.get(_job_key(folder, lang, device))
+    if job is None or job.is_in("idle"):
+        return {"state": "none"}
+    snap = job.snapshot()
+    return {"state": "running" if job.running else snap["state"], "error": snap["data"].get("error", ""),
+            "started": snap["data"].get("started", 0), "ended": snap["data"].get("ended", 0)}
 
 
 def start_translation_job(folder: Path, lang: str, device: str, force: bool = False) -> dict:
-    """Spustí překlad na pozadí (nikdy neblokuje okno ani mobil). Opakované volání vrací stav běžící úlohy."""
+    """Starts a translation in the background (never blocks the window or the phone). A repeated call returns the running job's state.
+    A failed job is not retried for 30 s unless force=True (the phone polls every few seconds)."""
     key = _job_key(folder, lang, device)
     with _TR_JOBS_LOCK:
         job = _TR_JOBS.get(key)
-        if job and job["state"] == "running":
-            return dict(job)
-        if job and job["state"] == "failed" and not force and time.time() - job.get("ended", 0) < 30:
-            return dict(job)
-        job = {"state": "running", "started": time.time(), "error": ""}
-        _TR_JOBS[key] = job
+        if job is None:
+            job = _TR_JOBS[key] = Job(f"překlad {Path(folder).name} → {lang} ({device})")
         lock = _FOLDER_LOCKS.setdefault(key[0], threading.Lock())
-    threading.Thread(target=_run_translation_job, args=(key, Path(folder), lang, device, lock), daemon=True).start()
-    return dict(job)
+    recent_fail = job.is_in("failed") and time.time() - job.data.get("ended", 0) < 30
+    if job.running or (recent_fail and not force) or not job.start():
+        return translation_job_status(folder, lang, device)
+    threading.Thread(target=_run_translation_job, args=(job, Path(folder), lang, device, lock), daemon=True).start()
+    return translation_job_status(folder, lang, device)
 
 
-def _run_translation_job(key, folder: Path, lang: str, device: str, lock):
-    state, err = "failed", ""
+def _run_translation_job(job: "Job", folder: Path, lang: str, device: str, lock):
+    err = ""
     try:
-        with lock:                       # jeden recept se nepřekládá dvakrát současně (sdílí mezipaměť vět)
+        with lock:                       # one recipe is never translated twice at the same time (they share the sentence cache)
             res_j, _ = generate_translated_files(folder, lang, target_device=device)
-        if res_j and res_j.exists():
-            state = "done"
-        else:
+        if not (res_j and res_j.exists()):
             err = tx("Překladač nevrátil výsledek (zkontroluj Gemini klíč nebo instalaci argostranslate).")
     except Exception as e:
         err = str(e) or e.__class__.__name__
         log("Překlad selhal:\n" + traceback.format_exc())
-    with _TR_JOBS_LOCK:
-        _TR_JOBS[key].update(state=state, error=err, ended=time.time())
+    job.finish(err)
 
 
 class TranslationWorker(QThread):
@@ -2280,7 +2769,7 @@ class DeviceConversionWorker(QThread):
 
 
 # ==========================================
-# ROBUSTNÍ EXTRAKCE RECEPTU (v10)
+# ROBUST RECIPE EXTRACTION (v10)
 # ==========================================
 STEP_HEADERS = {
     "příprava", "postup", "postup přípravy", "způsob přípravy", "jak na to", "kroky", "pokyn", "pokyny", "návod",
@@ -2299,7 +2788,7 @@ STOP_HEADERS = {
     "wartości odżywcze", "komentarze", "podobne przepisy", "porady",
     "přidat do nákupního seznamu", "vhodné kolekce", "suroviny", "nutriční hodnoty",
     "registrujte se, abyste mohli komentovat recepty!", "přihlásit / registrace",
-    # konec článku na zpravodajských webech s recepty (Prima FRESH, blogy…)
+    # end of the article on news sites with recipes (Prima FRESH, blogs…)
     "přečtěte si také", "související články", "související recepty", "další recepty", "vstoupit do diskuze",
     "diskuze", "nejlepší recepty e-mailem", "lesen sie auch", "das könnte sie auch interessieren",
     "related recipes", "you may also like", "read more", "more recipes", "related articles",
@@ -2315,7 +2804,7 @@ SETTING_RE = re.compile(
 
 def _norm_line(line: str) -> str:
     low = line.lower().strip()
-    low = re.sub(r'^[^\w]+', '', low)          # emoji / odrážky na začátku
+    low = re.sub(r'^[^\w]+', '', low)          # emoji / bullets at the start
     return low.rstrip(":").strip()
 
 
@@ -2334,7 +2823,7 @@ def _ld_is_type(obj: dict, name: str) -> bool:
 
 
 def find_recipe_ld(soup) -> dict:
-    """Najde Recipe v JSON-LD – zvládne @graph, seznamy, vnoření i @type jako seznam."""
+    """Finds the Recipe in JSON-LD – handles @graph, lists, nesting and @type as a list."""
     for sc in soup.find_all("script", attrs={"type": re.compile(r"ld\+json", re.IGNORECASE)}):
         raw = sc.string or sc.get_text() or ""
         try:
@@ -2358,12 +2847,12 @@ def _clean_ws(s: str) -> str:
 
 
 def _split_instruction_string(s: str) -> list[str]:
-    # nové řádky jen tam, kde opravdu končí odstavec (<br>, <p>, <li>…); <nobr>, <b> apod. větu nedělí
+    # new lines only where a paragraph really ends (<br>, <p>, <li>…); <nobr>, <b> and the like do not split a sentence
     s = re.sub(r'(?i)<\s*(br|/p|/li|/div|/h\d)\s*/?>', "\n", str(s or ""))
     txt = BeautifulSoup(s, "html.parser").get_text("")
     parts = [p for p in re.split(r'\n+', txt) if p.strip()]
     if len(parts) == 1:
-        # "1. … 2. … 3. …" v jednom řetězci
+        # "1. … 2. … 3. …" in one string
         numbered = re.split(r'(?:^|\s)(?=\d{1,2}[.)]\s)', parts[0])
         if len([n for n in numbered if n.strip()]) > 1:
             parts = numbered
@@ -2394,7 +2883,7 @@ def ld_instructions_to_texts(inst) -> list[str]:
 
 
 def _leaf_texts(soup, selector: str) -> list[str]:
-    """Vrátí texty jen 'listových' shod – rodič, který obsahuje jinou shodu, se přeskočí (žádné duplicity)."""
+    """Returns texts of 'leaf' matches only – a parent that contains another match is skipped (no duplicates)."""
     els = soup.select(selector)
     ids = {id(e) for e in els}
     out = []
@@ -2430,7 +2919,7 @@ def steps_from_visible_text(visible_text: str) -> list[str]:
     blocks = _blocks_after_header(lines, STEP_HEADERS)
     if not blocks:
         return []
-    # Nadpis "Příprava" se často objevuje i u doby přípravy nahoře → vezmeme blok s nejvíc větami.
+    # The heading “Příprava” often also appears at the preparation time at the top → take the block with the most sentences.
     best = max(blocks, key=lambda b: sum(1 for x in b if len(x) > 25))
     marker_mode = any(STEP_MARKER_RE.match(x) for x in best)
     steps: list[str] = []
@@ -2456,7 +2945,7 @@ def steps_from_visible_text(visible_text: str) -> list[str]:
         if marker_mode and (cur or len(ln) > 3):
             cur.append(ln)
         elif cur and len(ln) <= 40 and SETTING_RE.search(ln):
-            cur.append(ln)          # řádek s nastavením (5 min / 100 °C / rychlost 1) patří k předchozímu kroku
+            cur.append(ln)          # a line with settings (5 min / 100 °C / speed 1) belongs to the previous step
         elif len(ln) > 15:
             flush()
             cur.append(ln)
@@ -2482,8 +2971,8 @@ TIPS_HEADERS = ("tipy", "tip", "tipps", "tips", "porady", "wskazówki", "astuces
 
 
 def extract_mcs_dom(soup) -> tuple[list[str], list[str]]:
-    """Monsieur-cuisine.com: kroky v .recipe-detail-live-note (odstavce oddělené prázdným řádkem),
-    suroviny v .ingredient-group-view (název a množství v oddělených buňkách)."""
+    """Monsieur-cuisine.com: steps in .recipe-detail-live-note (paragraphs separated by an empty line),
+    ingredients in .ingredient-group-view (name and amount in separate cells)."""
     steps: list[str] = []
     note = soup.select_one(".recipe-detail-live-note .text-pre-line") or soup.select_one(".recipe-detail-live-note")
     if note:
@@ -2505,15 +2994,15 @@ def extract_mcs_dom(soup) -> tuple[list[str], list[str]]:
         if tips:
             steps.append("💡 Tipy: " + " ".join(tips))
     if not steps:
-        # Komunitní recepty: jen vedené kroky jako karty (číslo, název, text / nastavení stroje).
-        # Stránka má stejný seznam dvakrát → stačí první.
+        # Community recipes: only guided steps as cards (number, title, text / machine settings).
+        # The page has the same list twice → the first one is enough.
         lst = soup.select_one(".create-recipe-step-list")
         for it in (lst.select(".step-list-item") if lst else []):
             name_el, body_el = it.select_one(".step-name"), it.select_one(".step-drag-details")
             name = _clean_ws(name_el.get_text(" ", strip=True)) if name_el else ""
             body = _clean_ws(body_el.get_text(" ", strip=True)) if body_el else ""
             body = re.sub(r'(\d)\s*℃', r'\1 °C', body)
-            # nastavení na kartě: „… 35sek. 1 Vlevo“ = rychlost 1 a levý chod, „8 Vpravo“ = rychlost 8
+            # settings on the card: “… 35sek. 1 Vlevo” = speed 1 and reverse, “8 Vpravo” = speed 8
             body = re.sub(r'\b(\d{1,2}(?:[.,]5)?)\s+Vlevo\b', r'rychlost \1 / levý chod', body)
             body = re.sub(r'\b(\d{1,2}(?:[.,]5)?)\s+Vpravo\b', r'rychlost \1', body)
             txt = f"{name}: {body}" if name and body else (body or name)
@@ -2542,12 +3031,12 @@ def extract_mcs_dom(soup) -> tuple[list[str], list[str]]:
 
 
 _HEADING_TAGS = ("h1", "h2", "h3", "h4", "h5", "h6")
-# „PRIMA TIP:“, „Tip:“, „Tipp!“ na začátku odstavce
+# “PRIMA TIP:”, “Tip:”, “Tipp!” at the start of a paragraph
 _TIP_LINE_RE = re.compile(r'^\W*(?:\w+\s+){0,2}(?:tip|tipy|tipp|tipps|tips|rada)\s*[:!–-]', re.IGNORECASE)
 
 
 def _is_tips_title(text: str) -> bool:
-    """Nadpis části s tipy: „Tipy“, „Tipy na obměny receptu“, „Užitečné tipy“…"""
+    """Heading of a tips section: “Tipy”, “Tipy na obměny receptu”, “Užitečné tipy”…"""
     k = search_key(_norm_line(text))
     if len(k) > 60:
         return False
@@ -2555,9 +3044,9 @@ def _is_tips_title(text: str) -> bool:
 
 
 def recipe_section_from_dom(soup) -> dict:
-    """Postup receptu podle struktury stránky: nadpis „Postup přípravy“ a za ním vše až po další nadpis
-    stejné úrovně (dál bývají reklamy, související články, diskuze). Tipy (blockquote, „TIP:“, podnadpis
-    „Tipy…“) jdou zvlášť. Vrací {"steps": [...], "tips": [...], "nodes": [prvky stránky s postupem]}."""
+    """The recipe method by the page structure: the heading “Postup přípravy” and everything after it up to the next
+    heading of the same level (further on there are usually ads, related articles, discussion). Tips (blockquote,
+    “TIP:”, a “Tipy…” subheading) go separately. Returns {"steps": [...], "tips": [...], "nodes": [page elements with the method]}."""
     best = {"steps": [], "tips": [], "nodes": []}
     for h in soup.find_all(_HEADING_TAGS):
         if h.find_parent(["header", "nav", "footer", "aside"]):
@@ -2566,7 +3055,7 @@ def recipe_section_from_dom(soup) -> dict:
             continue
         level = int(h.name[1])
         anchor = h
-        # nadpis bývá zabalený (<div class="title"><h2>Postup</h2></div><ol>…) → o úroveň výš
+        # the heading is often wrapped (<div class="title"><h2>Postup</h2></div><ol>…) → one level up
         for _ in range(2):
             if anchor.find_next_sibling() is None and anchor.parent is not None and anchor.parent.name not in ("body", "html"):
                 anchor = anchor.parent
@@ -2577,7 +3066,7 @@ def recipe_section_from_dom(soup) -> dict:
             text = _clean_ws(sib.get_text(" ", strip=True))
             sub_h = sib if name in _HEADING_TAGS else None
             if sub_h is None and len(text) <= 60:
-                # nadpis zabalený v <div>/<p><strong>
+                # heading wrapped in <div>/<p><strong>
                 inner = sib.find(_HEADING_TAGS)
                 if inner is not None and _clean_ws(inner.get_text(" ", strip=True)) == text:
                     sub_h = inner
@@ -2590,7 +3079,7 @@ def recipe_section_from_dom(soup) -> dict:
                     continue
                 if _is_header(text, STOP_HEADERS) or _is_header(text, ING_HEADERS):
                     break
-                in_tips = False                    # podnadpis skupiny kroků („Těsto“, „Omáčka“)
+                in_tips = False                    # subheading of a group of steps (“Těsto”, “Omáčka”)
                 nodes.append(sib)
                 continue
             if not text:
@@ -2624,10 +3113,10 @@ def recipe_section_from_dom(soup) -> dict:
 
 
 def _locate_blocks(soup, items: list[str], exclude: list | None = None) -> list:
-    """Najde prvky stránky, ve kterých jsou položky (suroviny, kroky). Skupiny surovin bývají v oddělených
-    boxech, proto se hledá postupně: vždy blok s nejvíc položkami na co nejméně textu. Položka se hledá podle
-    svých nejdelších slov (celých) – na webu bývá jinak seřazená („PHO vývar 1 litr“). Prvky z `exclude`
-    (např. postup) a vše kolem nich se přeskočí. Málo nalezeného → []."""
+    """Finds page elements holding the items (ingredients, steps). Ingredient groups are often in separate boxes,
+    so the search goes step by step: always the block with the most items on the least text. An item is searched by
+    its longest (whole) words – the website often orders them differently (“PHO vývar 1 litr”). Elements from `exclude`
+    (e.g. the method) and everything around them are skipped. Too little found → []."""
     keys = []
     for it in items:
         it = str(it or "")
@@ -2638,7 +3127,7 @@ def _locate_blocks(soup, items: list[str], exclude: list | None = None) -> list:
             keys.append(tuple(words))
     if not keys or soup.body is None:
         return []
-    # blok nesmí být o moc delší než samotné položky – jinak je to obal celé stránky
+    # the block must not be much longer than the items themselves – otherwise it is the wrapper of the whole page
     limit = 3 * sum(len(_clean_ws(str(x))) for x in items) + 600
     excl = {id(e) for e in (exclude or []) if e is not None}
     cands = []
@@ -2657,12 +3146,12 @@ def _locate_blocks(soup, items: list[str], exclude: list | None = None) -> list:
         for el, txt, words in cands:
             cov = [ws for ws in remaining if all(w in words for w in ws)]
             if len(cov) >= need:
-                score = len(cov) / (len(txt) + 200)       # hustota: hodně položek na málo textu
+                score = len(cov) / (len(txt) + 200)       # density: many items on little text
                 if score > best_score:
                     best, best_cov, best_score = el, cov, score
         if best is None:
             break
-        # přibrat obal s nadpisem skupiny („Masové knedlíčky“), pokud nepřidá skoro nic jiného
+        # take in the wrapper with the group heading (“Masové knedlíčky”) if it adds almost nothing else
         while best.parent is not None and best.parent.name not in ("body", "html", "main", "article") \
                 and len(_clean_ws(best.parent.get_text(" "))) <= len(_clean_ws(best.get_text(" "))) + 80:
             best = best.parent
@@ -2684,9 +3173,9 @@ def _ld_people(v) -> list[str]:
 
 
 def trim_recipe_page(soup, recipe_ld: dict, ingredients: list[str], steps: list[str]) -> bool:
-    """Oholí uloženou stránku (kartu receptu) na recept: titulek, hlavní obrázek, autor, popis, suroviny,
-    postup a tipy. Menu, reklamy, související články, diskuze a patička zmizí. <head> (styly) zůstává.
-    Když recept na stránce nenajde, nechá ji celou a vrátí False."""
+    """Trims a saved page (recipe card) down to the recipe: title, main image, author, description, ingredients,
+    method and tips. Menu, ads, related articles, discussion and footer disappear. <head> (styles) stays.
+    When no recipe is found on the page, it is left whole and False is returned."""
     if soup.body is None:
         return False
     keep = []
@@ -2700,13 +3189,13 @@ def trim_recipe_page(soup, recipe_ld: dict, ingredients: list[str], steps: list[
     keep += step_nodes
     for el in ing_els + step_nodes[:1]:
         keep.append(el)
-        prev = el.find_previous_sibling()          # nadpis „Suroviny“ / „Postup“ těsně před blokem
+        prev = el.find_previous_sibling()          # heading “Suroviny” / “Postup” right before the block
         if prev is not None and prev.name in _HEADING_TAGS:
             keep.append(prev)
     h1 = soup.body.find("h1")
     if h1 is not None:
         keep.append(h1)
-    # hlavní obrázek receptu (podle JSON-LD / og:image)
+    # main recipe image (by JSON-LD / og:image)
     img_url = recipe_ld.get("image") if isinstance(recipe_ld, dict) else ""
     if isinstance(img_url, list):
         img_url = img_url[0] if img_url else ""
@@ -2723,7 +3212,7 @@ def trim_recipe_page(soup, recipe_ld: dict, ingredients: list[str], steps: list[
                 fig = img.find_parent(["figure", "picture"]) or img
                 keep.append(fig.find_parent("figure") or fig)
                 break
-    # autor a popis receptu
+    # recipe author and description
     ld = recipe_ld if isinstance(recipe_ld, dict) else {}
     for name in _ld_people(ld.get("author")):
         hits = [s.parent for s in soup.body.find_all(string=lambda x: x and _clean_ws(x) == name)]
@@ -2734,7 +3223,7 @@ def trim_recipe_page(soup, recipe_ld: dict, ingredients: list[str], steps: list[
             if _clean_ws(el.get_text(" ", strip=True)).startswith(desc) and len(el.get_text()) < len(ld.get("description") or "") * 1.5 + 50:
                 keep.append(el)
                 break
-    # tipy pod vlastním nadpisem mimo postup („Tipy“ + následující blok)
+    # tips under their own heading outside the method (“Tipy” + the following block)
     for h in soup.body.find_all(_HEADING_TAGS):
         if _is_tips_title(h.get_text(" ", strip=True)) and not h.find_parent(["header", "nav", "footer", "aside"]):
             keep.append(h)
@@ -2754,7 +3243,7 @@ def trim_recipe_page(soup, recipe_ld: dict, ingredients: list[str], steps: list[
     def prune(el):
         for child in list(el.children):
             if not hasattr(child, "name") or child.name is None:
-                continue                            # text mezi prvky necháme
+                continue                            # keep the text between elements
             if id(child) in keep_ids:
                 continue
             if id(child) in path_ids:
@@ -2775,7 +3264,7 @@ def extract_recipe_content(soup, visible_text: str, fallback_title: str) -> dict
 
     mcs_steps, mcs_ings = extract_mcs_dom(soup)
 
-    # --- suroviny
+    # --- ingredients
     ingredients, ing_src = [], ""
     if mcs_ings:
         ingredients, ing_src = mcs_ings, "mcs-dom"
@@ -2793,7 +3282,7 @@ def extract_recipe_content(soup, visible_text: str, fallback_title: str) -> dict
         ingredients = ingredients_from_visible_text(visible_text)
         ing_src = "text" if ingredients else "none"
 
-    # --- kroky
+    # --- steps
     step_texts, step_src = ld_instructions_to_texts(recipe_ld.get("recipeInstructions")), "ld+json"
     if not step_texts and mcs_steps:
         step_texts, step_src = mcs_steps, "mcs-dom"
@@ -2823,7 +3312,7 @@ def extract_recipe_content(soup, visible_text: str, fallback_title: str) -> dict
 
 
 # ==========================================
-# JEMNÉ KROKY (guided) – MCS API, Cookidoo JSON, fallback z běžných kroků
+# DETAILED STEPS (guided) – MCS API, Cookidoo JSON, fallback from ordinary steps
 # ==========================================
 MCS_MODE_LABELS = {
     "customized": "Manuální vaření", "roasting": "Opékání", "steaming": "Vaření v páře",
@@ -2873,7 +3362,7 @@ def _fmt_secs(sec) -> str:
 
 
 def split_sentences(text: str) -> list[str]:
-    """Dělí na věty jen mimo závorky a ne za zkratkami (cca., vel. M, …)."""
+    """Splits into sentences only outside brackets and not after abbreviations (cca., vel. M, …)."""
     out, buf, depth = [], [], 0
     i, n = 0, len(text)
     while i < n:
@@ -2906,7 +3395,7 @@ def _setting_dials(setting: str) -> dict:
 
 
 def _weigh_note(sentence: str, ingredients: list[str]) -> str:
-    """K větě typu 'navažte sezam, sůl a vodu' doplní množství ze seznamu surovin skupiny."""
+    """Adds amounts from the group's ingredient list to a sentence like 'navažte sezam, sůl a vodu'."""
     if _qty_outside_parens(sentence) or not ingredients:
         return ""
     low = sentence.lower()
@@ -2923,7 +3412,7 @@ def _weigh_note(sentence: str, ingredients: list[str]) -> str:
 
 def _fine_from_formatted(raw: str, parent: int, group: str, ingredients: list[str], structured: bool) -> list[dict]:
     raw = raw or ""
-    settings = re.findall(r'<nobr>(.*?)</nobr>', raw, flags=re.S)       # Cookidoo: nastavení stroje = malé <nobr>
+    settings = re.findall(r'<nobr>(.*?)</nobr>', raw, flags=re.S)       # Cookidoo: machine settings = small <nobr>
     idx = [0]
 
     def tok(m):
@@ -3116,7 +3605,7 @@ def mcs_api_to_basic(api: dict) -> list[dict]:
 
 
 def fine_steps_from_steps(steps: list[dict]) -> list[dict]:
-    """Fallback pro starší uložené recepty: rozdělí běžné kroky na věty/úkony."""
+    """Fallback for older saved recipes: splits ordinary steps into sentences/actions."""
     out = []
     for i, st in enumerate(steps or []):
         raw = st.get("html") or st.get("text") or ""
@@ -3171,7 +3660,7 @@ def convert_fine_steps_for_device(fine: list[dict], target_device: str) -> list[
 
 
 _ING_STOP = {
-    # jednotky a obecná slova (cs, en, de)
+    # units and generic words (cs, en, de)
     "gramu", "gramy", "gram", "gramm", "kg", "ml", "litr", "litru", "cajova", "cajove", "cajovych", "lzicka", "lzicky", "lzicek", "lzice",
     "lzic", "polevkova", "polevkove", "spetka", "spetky", "kostka", "kostky", "kostek", "kulicky", "kulicek", "listky", "listku", "strouzek",
     "strouzky", "platky", "platku", "platek", "snitky", "snitek", "stonku", "stonky", "hrst", "balicek", "balicku", "baliceku", "kus", "kusy",
@@ -3195,7 +3684,7 @@ _AMOUNT_RE = re.compile(r'(\d+(?:[.,]\d+)?)\s*(kg|dkg|g|gramů|gramy|gram|ml|dl|
 
 
 def _ing_keywords(line: str) -> tuple[list[str], str]:
-    """Klíčová slova suroviny (kmeny bez diakritiky) a hlavní slovo. Popis za čárkou/závorkou se ignoruje."""
+    """Keywords of an ingredient (stems without accents) and the main word. A description after a comma/bracket is ignored."""
     s = re.sub(r'\([^)]*\)', ' ', line)
     s = _QTY_UNIT_LEAD_RE.sub('', s, count=1)
     s = re.sub(r'\s\d+(?:[.,]\d+)?\s*(?:kg|g|ml|l)?\s*$', '', s)          # "brown onion 50 g"
@@ -3221,11 +3710,11 @@ def _amount_g(text: str) -> tuple[float, str] | None:
 
 
 def match_recipe_ingredients(step_texts: list[str], all_ingredients: list[str]) -> list[list[dict]]:
-    """Pro všechny kroky najednou: které suroviny se v kroku použijí.
-    - hledá se jen podle názvu suroviny (ne podle jednotek, přídavných jmen a popisu „nakrájené na plátky“),
-    - když je stejná surovina v receptu víckrát (knedlík / omáčka), vybere se ta správná podle skupiny,
-      množství v kroku, nebo podle pořadí (první ještě nepoužitá),
-    - když krok použije jen část (20 g ze 40 g másla), přidá se poznámka s množstvím pro tento krok."""
+    """For all steps at once: which ingredients a step uses.
+    - matched only by the ingredient name (not by units, adjectives and descriptions like “nakrájené na plátky”),
+    - when the same ingredient appears more than once (dumpling / sauce), the right one is picked by group,
+      by the amount in the step, or by order (the first one not used yet),
+    - when a step uses only part (20 g of 40 g of butter), a note with the amount for this step is added."""
     groups, g = [], 0
     infos = []
     for i, ing in enumerate(all_ingredients):
@@ -3246,7 +3735,7 @@ def match_recipe_ingredients(step_texts: list[str], all_ingredients: list[str]) 
             hits = tuple(sorted(k for k in inf["kws"] if re.search(r'(?<![a-z])' + re.escape(k), low)))
             if hits:
                 cand[i] = hits
-        # suroviny, které krok „trefí“ stejnými slovy (2× máslo, 2× cukr, kuřecí prsa / kuřecí bujón) → vybrat jednu
+        # ingredients a step “hits” with the same words (2× butter, 2× sugar, chicken breast / chicken stock) → pick one
         by_main = {}
         for i in cand:
             by_main.setdefault(cand[i], []).append(i)
@@ -3295,7 +3784,7 @@ class RecipeTreeWidget(QTreeWidget):
         self.setAcceptDrops(True)
         self.setDropIndicatorShown(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        # Ctrl/Shift + klik označí víc receptů (export zálohy); kliknutí na kategorii vezme všechny její recepty
+        # Ctrl/Shift + click selects several recipes (backup export); clicking a category takes all its recipes
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
 
     def dropEvent(self, event):
@@ -3520,8 +4009,8 @@ LAN_WEB_APP_HTML = """<!DOCTYPE html>
 
   <div id="card-view">
     <div class="card-switch">
-      <button class="btn active" id="card-kind-sheet" onclick="setCardKind('sheet')" data-i18n="📱 Pro mobil">📱 Pro mobil</button>
-      <button class="btn" id="card-kind-orig" onclick="setCardKind('orig')" data-i18n="📄 Karta receptu">📄 Karta receptu</button>
+      <button class="btn active" id="card-kind-sheet" onclick="setCardKind('sheet')" data-i18n="📱 Pro mobil" style="display:none">📱 Pro mobil</button>
+      <button class="btn" id="card-kind-orig" onclick="setCardKind('orig')" data-i18n="📄 Karta receptu" style="display:none">📄 Karta receptu</button>
     </div>
     <iframe id="card-iframe" src="about:blank"></iframe>
   </div>
@@ -3569,7 +4058,7 @@ function setCardKind(k){
   loadCardIframe();
 }
 function recTitle(rec){
-  const tl = (lang === 'orig') ? UI : lang;      // názvy podle jazyka rozhraní, nebo podle zvoleného jazyka receptu
+  const tl = (lang === 'orig') ? UI : lang;      // titles by the interface language, or by the chosen recipe language
   if(tl === 'en' && rec.title_en) return rec.title_en;
   if(tl === 'cs' && rec.title_cs) return rec.title_cs;
   return rec.title;
@@ -3635,9 +4124,9 @@ function updateIconBtnLabel(){
   document.getElementById('btn-icon-style').textContent = (iconStyle === 'bots') ? T('Ikony: 🍲/🤖') : T('Ikony: 🟢/🔵');
 }
 
-function getIconPrefix(plat, isFav){
+function getIconPrefix(plat, isFav, siteIcon){
   const p = (plat || 'tm6').toLowerCase();
-  const pIc = (iconStyle === 'bots') ? ({mcs: '🤖', other: '🍽️'}[p] || '🍲') : ({mcs: '🔵', other: '⚫'}[p] || '🟢');
+  const pIc = (iconStyle === 'bots') ? ({mcs: '🤖', other: '🍽️'}[p] || '🍲') : (siteIcon || {mcs: '🔵', other: '⚫'}[p] || '🟢');
   return (isFav ? '⭐ ' : '') + pIc + ' ';
 }
 
@@ -3687,7 +4176,7 @@ function renderTree(){
     groups[cat].forEach(rec => {
       const d = document.createElement('div');
       d.className = 'rec-item' + (rec.recipe_id === currentId ? ' active' : '');
-      d.textContent = getIconPrefix(rec.source_platform, rec.is_favorite) + recTitle(rec);
+      d.textContent = getIconPrefix(rec.source_platform, rec.is_favorite, rec.site_icon) + recTitle(rec);
       d.onclick = () => {
         openRecipe(rec.recipe_id);
         document.getElementById('sidebar').classList.add('hidden');
@@ -3831,8 +4320,8 @@ loadCatalog();
 
 
 # ==========================================
-# SDÍLENÉ STYLY, PÍSMA A OBRÁZKY KARET RECEPTU (localchef_data/web_assets)
-# Každý soubor je uložený jen jednou – pod otiskem obsahu (hash), index.json mapuje adresu z webu → soubor.
+# SHARED STYLES, FONTS AND IMAGES OF RECIPE CARDS (localchef_data/web_assets)
+# Each file is stored only once – under a fingerprint of its content (hash); index.json maps a web address → file.
 # ==========================================
 WEB_ASSETS_DIR = BASE_DIR / "web_assets"
 ASSET_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
@@ -3841,8 +4330,8 @@ CSS_IMPORT_RE = re.compile(r'@import\s+([\'"])([^\'"]+)\1', re.IGNORECASE)
 ASSET_MAX_BYTES = 15 * 1024 * 1024
 _ASSET_LOCK = threading.Lock()
 _ASSET_INDEX: dict = {"loaded": False, "map": {}}
-_ASSET_FAILED: dict = {}                  # adresa → kdy naposledy selhala (nezkoušet znovu hned)
-_ASSET_BUSY: set = set()                  # složky receptů, které se právě doplňují
+_ASSET_FAILED: dict = {}                  # address → when it last failed (do not retry right away)
+_ASSET_BUSY: set = set()                  # recipe folders that are being completed right now
 _FONT_EXT = (".woff", ".woff2", ".ttf", ".otf", ".eot")
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".svg", ".ico", ".bmp")
 
@@ -3925,8 +4414,8 @@ def _css_absolutize(text: str, css_url: str) -> tuple[str, list[str]]:
 
 
 def cache_asset(url: str, referer: str = "", depth: int = 0, force: bool = False) -> str | None:
-    """Uloží soubor do web_assets (jen jednou podle obsahu) a vrátí jeho relativní cestu.
-    force=True: stáhne znovu i už uložený soubor (kontrola stylů při startu)."""
+    """Stores a file in web_assets (only once by content) and returns its relative path.
+    force=True: downloads again even a file already stored (style check at start)."""
     if not url.startswith(("http://", "https://")):
         return None
     have = asset_lookup(url)
@@ -3938,7 +4427,7 @@ def cache_asset(url: str, referer: str = "", depth: int = 0, force: bool = False
         data, ctype = _asset_fetch(url, referer)
     except Exception:
         _ASSET_FAILED[url] = time.time()
-        return have                           # bez internetu zůstává, co už je uložené
+        return have                           # without internet, what is already stored stays
     kind, ext = _asset_kind_ext(url, ctype)
     subs: list[str] = []
     if kind == "css":
@@ -3946,7 +4435,7 @@ def cache_asset(url: str, referer: str = "", depth: int = 0, force: bool = False
         data = text.encode("utf-8")
     rel = f"{_asset_site(url)}/{kind}/{hashlib.sha1(data).hexdigest()[:24]}{ext}"
     target = WEB_ASSETS_DIR / rel
-    if not target.exists():                   # stejný obsah = stejný soubor → žádné duplicity
+    if not target.exists():                   # same content = same file → no duplicates
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
     with _ASSET_LOCK:
@@ -3959,9 +4448,9 @@ def cache_asset(url: str, referer: str = "", depth: int = 0, force: bool = False
 
 
 def refresh_web_assets() -> dict:
-    """Při startu: znovu ověří všechny uložené styly (CSS). Změněný styl se uloží jako nový soubor a index
-    se přepne na něj – všechny recepty, které ho používají, ho tím dostanou hned, nic se u nich nestahuje.
-    Nové písma/obrázky, na které nový styl odkazuje, se doplní. Soubory, na které už nic neodkazuje, se smažou."""
+    """At start: checks all stored styles (CSS) again. A changed style is stored as a new file and the index switches
+    to it – every recipe that uses it gets it immediately, nothing is downloaded for them.
+    New fonts/images the new style refers to are added. Files nothing refers to any more are deleted."""
     stats = {"checked": 0, "changed": 0, "removed": 0}
     css = [(u, e) for u, e in list(_asset_map().items()) if e.get("kind") == "css"]
     for url, entry in css:
@@ -3976,7 +4465,7 @@ def refresh_web_assets() -> dict:
         for f in WEB_ASSETS_DIR.rglob("*"):
             if f.is_file() and f.name not in ("index.json", "index.json.tmp"):
                 rel = f.relative_to(WEB_ASSETS_DIR).as_posix()
-                if rel not in used and time.time() - f.stat().st_mtime > 600:   # čerstvé soubory nechat (právě se ukládá recept)
+                if rel not in used and time.time() - f.stat().st_mtime > 600:   # leave fresh files alone (a recipe is being saved right now)
                     try:
                         f.unlink()
                         stats["removed"] += 1
@@ -4052,7 +4541,7 @@ def cache_page_assets(folder: Path) -> int:
 
 
 def schedule_page_assets(folder: Path):
-    """Doplní styly, písma a obrázky karty na pozadí (po uložení receptu a u starších receptů při zobrazení)."""
+    """Adds the card's styles, fonts and images in the background (after saving a recipe, and for older recipes when shown)."""
     key = str(Path(folder).resolve())
     with _ASSET_LOCK:
         if key in _ASSET_BUSY:
@@ -4073,7 +4562,7 @@ def schedule_page_assets(folder: Path):
 
 
 def rewrite_card_html(html: str, page_url: str, host: str) -> tuple[str, int]:
-    """Odkazy na styly a obrázky webu nahradí uloženými kopiemi z web_assets. Vrátí i počet chybějících."""
+    """Replaces links to the website's styles and images with stored copies from web_assets. Also returns the number missing."""
     soup = BeautifulSoup(html, "html.parser")
     base = _page_base(soup, page_url)
     prefix = f"http://{host}/assets/"
@@ -4141,14 +4630,14 @@ def localize_css(text: str, host: str) -> str:
 def serve_asset_path(rel: str) -> Path | None:
     try:
         target = (WEB_ASSETS_DIR / urllib.parse.unquote(rel)).resolve()
-        target.relative_to(WEB_ASSETS_DIR.resolve())          # nic mimo web_assets
+        target.relative_to(WEB_ASSETS_DIR.resolve())          # nothing outside web_assets
     except Exception:
         return None
     return target if target.is_file() else None
 
 
 # ==========================================
-# DOPLŇKY RECEPTU: obrázek, nutriční hodnoty, tipy, časy  +  ČISTÝ LIST RECEPTU (PDF a mobil)
+# RECIPE EXTRAS: image, nutrition, tips, times  +  CLEAN RECIPE SHEET (PDF and phone)
 # ==========================================
 NUTRI_LABELS = {
     "calories": ("Energie", "Energy"),
@@ -4233,9 +4722,22 @@ def _nutri_from_entries(entries) -> dict:
     return out
 
 
+def _snapshot_source(folder: Path) -> Path | None:
+    """The saved page: page_snapshot.html, or the older page_snapshot.mhtml (recipes saved by early versions)."""
+    for name in ("page_snapshot.html", "page_snapshot.mhtml"):
+        if (folder / name).exists():
+            return folder / name
+    return None
+
+
 def _extract_extras(folder: Path) -> dict:
-    snap = folder / "page_snapshot.html"
-    html = snap.read_text(encoding="utf-8", errors="ignore") if snap.exists() else ""
+    snap = _snapshot_source(folder)
+    if snap is None:
+        html = ""
+    elif snap.suffix == ".mhtml":
+        html = extract_html_from_mhtml(snap)          # read only – the folder is not changed
+    else:
+        html = snap.read_text(encoding="utf-8", errors="ignore")
     soup = BeautifulSoup(html, "html.parser") if html else None
     ld = find_recipe_ld(soup) if soup else {}
     if not ld:
@@ -4248,9 +4750,33 @@ def _extract_extras(folder: Path) -> dict:
         api = json.loads((folder / "_debug_api.json").read_text(encoding="utf-8") or "{}")
     except Exception:
         pass
-    ex = {"v": 1, "image": "", "nutrition": {}, "nutrition_per": "", "tips": [], "prep": "", "total": "", "yield": ""}
+    ex = {"v": EXTRAS_VERSION, "image": "", "nutrition": {}, "nutrition_per": "", "tips": [], "prep": "", "total": "",
+          "yield": "", "author": "", "description": "", "url": ""}
+    try:
+        ex["url"] = json.loads((folder / "recipe.json").read_text(encoding="utf-8")).get("url") or ""
+    except Exception:
+        pass
+    ex["author"] = ", ".join(_ld_people(ld.get("author"))[:3])
+    if not ex["author"] and soup:
+        meta_a = soup.find("meta", attrs={"name": "author"})
+        ex["author"] = _clean_ws(meta_a.get("content", "")) if meta_a else ""
+    d = ld.get("description") or ""
+    if not d and soup:
+        og_d = soup.find("meta", attrs={"property": "og:description"}) or soup.find("meta", attrs={"name": "description"})
+        d = og_d.get("content", "") if og_d else ""
+        # a page's meta description is often the website's general blurb ("Svět receptů Thermomix® – Cookidoo®…"):
+        # used only when it shares a word with the recipe title
+        try:
+            title = json.loads((folder / "recipe.json").read_text(encoding="utf-8")).get("title", "")
+        except Exception:
+            title = ""
+        stems = {w[:5] for w in re.findall(r"\w{4,}", search_key(title))}
+        if not stems or not any(w[:5] in stems for w in re.findall(r"\w{4,}", search_key(d))):
+            d = ""
+    d = _clean_ws(_plain(html_mod.unescape(str(d))))
+    ex["description"] = (d[:420].rsplit(" ", 1)[0] + "…") if len(d) > 430 else d
 
-    # obrázek
+    # image
     img = ld.get("image")
     if isinstance(img, list):
         img = img[0] if img else ""
@@ -4266,7 +4792,7 @@ def _extract_extras(folder: Path) -> dict:
                 break
     ex["image"] = str(img or "").replace("{transformation}/", "").replace("{transformation}", "")
 
-    # nutriční hodnoty
+    # nutrition
     nut = ld.get("nutrition") if isinstance(ld.get("nutrition"), dict) else {}
     for k, key in _LD_NUTRI.items():
         if nut.get(k):
@@ -4287,7 +4813,7 @@ def _extract_extras(folder: Path) -> dict:
                     ex["nutrition"] = found
                     break
 
-    # tipy (přednost mají tipy, které našlo už ukládání receptu – recipe.json → "tips")
+    # tips (tips already found when the recipe was saved take precedence – recipe.json → "tips")
     tips = []
     try:
         tips = [t for t in json.loads((folder / "recipe.json").read_text(encoding="utf-8")).get("tips") or [] if t]
@@ -4324,15 +4850,18 @@ def _extract_extras(folder: Path) -> dict:
     return ex
 
 
+EXTRAS_VERSION = 2          # 2 = also author, description and source address (1.6)
+
+
 def recipe_extras(folder: Path) -> dict:
-    """Obrázek, nutriční hodnoty, tipy a časy receptu (z uložené stránky). Výsledek se pamatuje v extras.json."""
+    """Image, nutrition, tips and times of a recipe (from the saved page). The result is remembered in extras.json."""
     folder = Path(folder)
     cache = folder / "extras.json"
-    snap = folder / "page_snapshot.html"
-    mtime = snap.stat().st_mtime if snap.exists() else 0
+    snap = _snapshot_source(folder)
+    mtime = snap.stat().st_mtime if snap else 0
     try:
         data = json.loads(cache.read_text(encoding="utf-8"))
-        if data.get("v") == 1 and data.get("src_mtime") == mtime:
+        if data.get("v") == EXTRAS_VERSION and data.get("src_mtime") == mtime:
             return data
     except Exception:
         pass
@@ -4340,7 +4869,8 @@ def recipe_extras(folder: Path) -> dict:
         data = _extract_extras(folder)
     except Exception as e:
         log(f"Doplňky receptu {folder.name} se nepodařilo načíst: {e}")
-        data = {"v": 1, "image": "", "nutrition": {}, "nutrition_per": "", "tips": [], "prep": "", "total": "", "yield": ""}
+        data = {"v": EXTRAS_VERSION, "image": "", "nutrition": {}, "nutrition_per": "", "tips": [], "prep": "", "total": "",
+                "yield": "", "author": "", "description": "", "url": ""}
     data["src_mtime"] = mtime
     try:
         cache.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -4349,8 +4879,48 @@ def recipe_extras(folder: Path) -> dict:
     return data
 
 
+def recipe_has_content(folder: Path) -> bool:
+    """Were ingredients or a method extracted? Otherwise the card falls back to the saved page."""
+    try:
+        d = json.loads((Path(folder) / "recipe.json").read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return bool(d.get("ingredients") or d.get("steps"))
+
+
+PDF_MARGINS_MM = (15, 20, 15, 15)        # left, top, right, bottom – the top a bit under Word's 2.5 cm, more fits on a page
+
+
+def write_recipe_pdf(html: str, target_path: str, title: str = "", img_path: str = "") -> bool:
+    """Prints the PDF sheet (render_recipe_sheet mode='pdf') to an A4 PDF. The image is given as resource "cc-hero".
+    The document gets the page size itself: without it QTextDocument.print() adds its own 2 cm margin on every side
+    on top of the writer's margins."""
+    from PyQt6.QtCore import QSizeF
+    doc = QTextDocument()
+    doc.setDocumentMargin(0)
+    doc.setDefaultFont(QFont("Segoe UI", 10))
+    if img_path:
+        img = QImage(img_path)
+        if not img.isNull():
+            if img.width() > 800:
+                img = img.scaledToWidth(800, Qt.TransformationMode.SmoothTransformation)
+            doc.addResource(QTextDocument.ResourceType.ImageResource.value, QUrl("cc-hero"), img)
+    writer = QPdfWriter(target_path)
+    writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+    writer.setPageMargins(QMarginsF(*PDF_MARGINS_MM), QPageLayout.Unit.Millimeter)
+    writer.setResolution(110)
+    writer.setTitle(title)
+    writer.setCreator(APP_NAME)
+    left, top, right, bottom = PDF_MARGINS_MM                   # A4 = 210 × 297 mm; the layout at screen dpi (96)
+    doc.setPageSize(QSizeF((210 - left - right) * 96 / 25.4, (297 - top - bottom) * 96 / 25.4))
+    doc.setHtml(html)
+    doc.print(writer)
+    del writer
+    return Path(target_path).exists() and Path(target_path).stat().st_size > 500
+
+
 def load_recipe_view(folder: Path, lang: str = "orig", device: str | None = None) -> tuple[dict, str]:
-    """Data receptu pro list/PDF: přeložená verze, když existuje, jinak originál. Vrací (data, skutečný jazyk)."""
+    """Recipe data for the sheet/PDF: the translated version when it exists, otherwise the original. Returns (data, actual language)."""
     folder = Path(folder)
     base = json.loads((folder / "recipe.json").read_text(encoding="utf-8"))
     device = device or (base.get("source_platform") or "tm6").lower()
@@ -4370,11 +4940,13 @@ SHEET_TXT = {
     "nutrition": ("Nutriční hodnoty", "Nutrition"), "per": ("na", "per"), "portions": ("Porce", "Servings"),
     "prep": ("Příprava", "Prep"), "total": ("Celkem", "Total"), "scale": ("Dávka", "Batch"),
     "orig_card": ("Karta receptu", "Recipe card"), "no_steps": ("Kroky nebyly nalezeny.", "No steps found."),
-    "source": ("Zdroj", "Source"),
+    "source": ("Zdroj", "Source"), "author": ("Autor", "Author"), "original": ("Původní kroky", "Original steps"),
+    "credit": ("Recept pochází z webu", "The recipe comes from"),
+    "personal": ("Patří autorovi a webu, uložený je jen pro osobní použití.", "It belongs to its author and the website, saved for personal use only."),
 }
 
 
-# barevné emoji se v PDF (Qt) často vykreslí jako prázdné čtverečky → do PDF je nedáváme (šipky ↺ ↻ zůstávají)
+# colour emoji are often drawn as empty squares in a PDF (Qt) → they are left out of the PDF (arrows ↺ ↻ stay)
 _EMOJI_RE = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+ ?")
 
 
@@ -4390,12 +4962,67 @@ def _step_html_plain(st: dict, is_mcs: bool, ui: str = "cs") -> str:
     return format_tm_icons_html(h, is_mcs=is_mcs, ui=ui)
 
 
+def dial_chips_html(dials: dict | None, ui: str = "cs", time_only: bool = False) -> str:
+    """Machine settings of one step as small chips: ⏱ time · 🌡 temperature · 🌀 speed / programme.
+    Values are unified for display: '2 sekundy' → '2 s', 'Speed 3' / 'Rychlost 3' / 'Stufe 3' → the UI language."""
+    d = dials or {}
+    word = "speed" if ui == "en" else "rychlost"
+    out = []
+    t = normalize_dial_time(d.get("time") or "—")
+    if t and t != "—":
+        out.append(("⏱", t))
+    if not time_only:
+        temp = str(d.get("temp") or "—").strip()
+        if temp and temp != "—":
+            out.append(("🌡", temp))
+        sp = str(d.get("speed") or "—").strip()
+        if sp and sp != "—":
+            out.append(("🌀", re.sub(r"(?i)\b(speed|rychlost|stufe|stupe[nň]|level)\s*(?=\d)", word + " ", sp)))
+    return "".join(f"<span class='dial'>{ic} {html_mod.escape(v)}</span>" for ic, v in out)
+
+
+_NUTRI_UNITS = {"calorie": "kcal", "calories": "kcal", "kcal": "kcal", "kj": "kJ", "gram": "g", "grams": "g", "g": "g",
+                "gramů": "g", "milligram": "mg", "milligrams": "mg", "mg": "mg", "microgram": "µg", "micrograms": "µg",
+                "mcg": "µg", "µg": "µg"}
+
+
+def nutri_value_text(v) -> str:
+    """'35 grams protein' → '35 g', '624 calories' → '624 kcal', '1.6 milligram of sodium' → '1.6 mg'.
+    Values with more numbers ('1449 kJ / 346 kcal') stay as they are."""
+    t = str(v or "").strip()
+    m = re.match(r"^([\d.,]+)\s*([^\W\d_]+)\.?\s*(.*)$", t)
+    if m and not re.search(r"\d", m.group(3)) and m.group(2).lower() in _NUTRI_UNITS:
+        return f"{m.group(1)} {_NUTRI_UNITS[m.group(2).lower()]}"
+    return t
+
+
+def _portions_text(v) -> str:
+    """Servings for display: websites give "4", ["8", "1 (9x13-inch) casserole"] or that list saved as text."""
+    if isinstance(v, str) and v.strip().startswith("["):
+        try:
+            import ast
+            v = ast.literal_eval(v.strip())
+        except Exception:
+            pass
+    if isinstance(v, (list, tuple)):
+        v = next((str(x).strip() for x in v if str(x).strip()), "")
+    return str(v or "").strip()
+
+
+_ORIG_UNIT_RE = re.compile(r"\s*\[orig: ([^\]]+)\]")
+
+
 def render_recipe_sheet(folder: Path, lang: str = "orig", device: str | None = None, ui: str = "cs",
                         mode: str = "web", scale: float = 1.0, metric: bool = True, image_src: str = "",
-                        card_url: str = "") -> str:
-    """Čistý list receptu: obrázek, suroviny, nutriční hodnoty, postup a tipy.
-    mode='pdf' → jednoduché HTML pro tisk do PDF, mode='web' → stránka pro mobil."""
+                        card_url: str = "", theme: str = "dark", nav_url: str = "") -> str:
+    """Recipe in the app's own design: image, title, author, source link, ingredients, method, nutrition and tips.
+    mode='pdf' → simple HTML for printing to PDF; mode='web' → the recipe card (desktop) and the phone, one template.
+    nav_url = this page's address without "device" – adds the TM6 / MCS (/ original steps) switch."""
     folder = Path(folder)
+    try:
+        base_platform = (json.loads((folder / "recipe.json").read_text(encoding="utf-8")).get("source_platform") or "tm6").lower()
+    except Exception:
+        base_platform = "tm6"
     data, real_lang = load_recipe_view(folder, lang, device)
     ex = recipe_extras(folder)
     is_mcs = (device or data.get("device") or data.get("source_platform") or "tm6").lower() == "mcs"
@@ -4413,9 +5040,9 @@ def render_recipe_sheet(folder: Path, lang: str = "orig", device: str | None = N
             h = convert_text_to_metric(h, html_highlight=False)
         steps.append(h)
     tips = data.get("tips") if real_lang != "orig" and data.get("tips") else ex.get("tips", [])
-    nut = [(NUTRI_LABELS[k][1 if ui == "en" else 0], ex["nutrition"][k]) for k in NUTRI_LABELS if k in ex.get("nutrition", {})]
+    nut = [(NUTRI_LABELS[k][1 if ui == "en" else 0], nutri_value_text(ex["nutrition"][k])) for k in NUTRI_LABELS if k in ex.get("nutrition", {})]
     meta = []
-    portions = data.get("portions") or ex.get("yield")
+    portions = _portions_text(data.get("portions") or ex.get("yield"))
     if portions:
         meta.append(f"{_st('portions', ui)}: {html_mod.escape(str(portions))}")
     if ex.get("prep"):
@@ -4430,8 +5057,12 @@ def render_recipe_sheet(folder: Path, lang: str = "orig", device: str | None = N
     if mode == "pdf":
         h3 = f"style='color:{accent}; font-size:12.5pt; margin-top:0; margin-bottom:4px;'"
         ul = "style='margin-top:0; margin-bottom:0; -qt-list-indent:1;'"
-        img = f"<img src='{image_src}' width='390'>" if image_src else ""
-        ing_html = "".join(f"<li style='margin-bottom:2px;'>{x}</li>" for x in ings) or "<li>—</li>"
+        # a small image (about 5 cm): a big one pushed the nutrition into a narrow wrapped column and took half a page
+        img = f"<img src='{image_src}' width='190'>" if image_src else ""
+        muted = lambda h: _ORIG_UNIT_RE.sub(lambda m: f" <span style='color:#888; font-size:8pt;'>({m.group(1)})</span>", h)
+        ing_html = "".join(
+            (f"</ul><p style='margin:6px 0 2px 0; font-weight:bold; color:{accent};'>{x[1:].strip()}</p><ul {ul}>"
+             if x.startswith("▸") else f"<li style='margin-bottom:2px;'>{muted(x)}</li>") for x in ings) or "<li>—</li>"
         nut_html = ""
         if nut:
             rows = "".join(f"<tr><td style='color:#555;'>{html_mod.escape(k)}</td><td align='right'><b>{html_mod.escape(v)}</b></td></tr>" for k, v in nut)
@@ -4439,13 +5070,13 @@ def render_recipe_sheet(folder: Path, lang: str = "orig", device: str | None = N
                         + (f"<p style='color:#777; margin:0 0 4px 0;'>{_st('per', ui)} {html_mod.escape(ex['nutrition_per'])}</p>" if ex.get("nutrition_per") else "")
                         + f"<table width='100%' cellspacing='0' cellpadding='3' style='border:1px solid #ccc;'>{rows}</table>")
         if img and nut_html:
-            top = f"<table width='100%' cellspacing='0' cellpadding='0'><tr><td width='54%' valign='top'>{img}</td><td width='4%'></td><td width='42%' valign='top'>{nut_html}</td></tr></table>"
+            top = f"<table width='100%' cellspacing='0' cellpadding='0'><tr><td width='30%' valign='top'>{img}</td><td width='4%'></td><td width='66%' valign='top'>{nut_html}</td></tr></table>"
         elif img:
-            top = f"<p align='center' style='margin:0;'>{img}</p>"
+            top = f"<p style='margin:0;'>{img}</p>"
         else:
             top = nut_html
-        steps = [re.sub(r"background-color:[^;']+;\s*color:[^;']+;", f"color:{accent};", x) for x in steps]   # ikony stroje v PDF jen barevným písmem
-        step_html = "".join(f"<li style='margin-bottom:5px;'>{x}</li>" for x in steps) or f"<li>{_st('no_steps', ui)}</li>"
+        steps = [re.sub(r"background-color:[^;']+;\s*color:[^;']+;", f"color:{accent};", x) for x in steps]   # machine icons in the PDF only as coloured text
+        step_html = "".join(f"<li style='margin-bottom:5px;'>{muted(x)}</li>" for x in steps) or f"<li>{_st('no_steps', ui)}</li>"
         tips_html = (f"<h3 {h3}>{_st('tips', ui)}</h3><ul {ul}>" + "".join(f"<li style='margin-bottom:2px;'>{html_mod.escape(t)}</li>" for t in tips) + "</ul>") if tips else ""
         return _EMOJI_RE.sub("", f"""<html><body style="font-family:'Segoe UI',Arial,sans-serif; font-size:10pt; color:#222;">
 <h1 style="color:{accent}; font-size:19pt; margin-top:0; margin-bottom:0;">{title}</h1>
@@ -4459,52 +5090,117 @@ def render_recipe_sheet(folder: Path, lang: str = "orig", device: str | None = N
 <div style="margin-top:8px;">{tips_html}</div>
 </body></html>""")
 
-    # mobil
+    # one template for the desktop recipe card and the phone (1.6): only the recipe's own data, in the app's design
+    th = "light" if theme == "light" else "dark"
+    site = site_info(data.get("url") or ex.get("url") or "", data.get("source_platform") or "")
+    src_url = data.get("url") or ex.get("url") or ""
+    accent = "#0277BD" if is_mcs else "#009A3E"
     img = f"<img class='hero' src='{html_mod.escape(image_src)}' alt=''>" if image_src else ""
+    author = ex.get("author") or ""
+    desc = ex.get("description") or ""
+    by = []
+    if author:
+        by.append(f"{_st('author', ui)}: <b>{html_mod.escape(author)}</b>")
+    if src_url:
+        by.append(f"<a class='src' href='{html_mod.escape(src_url)}' style='--site:{site['color']}'>"
+                  f"{site['icon']} {html_mod.escape(site['name'])} ↗</a>")
+    meta_chips = "".join(f"<span class='chip'>{m}</span>" for m in meta)
+    dev_links = ""
+    if nav_url:
+        opts = ([("other", _st("original", ui))] if (data.get("source_platform") or base_platform) == "other" else []) + \
+               [("tm6", "🍲 Thermomix TM6"), ("mcs", "🤖 Monsieur Cuisine")]
+        cur = (device or base_platform or "tm6").lower()
+        dev_links = "<div class='devs'>" + "".join(
+            f"<a class='dev{' on' if d == cur else ''}' href='{html_mod.escape(nav_url)}&amp;device={d}'>{html_mod.escape(lbl)}</a>"
+            for d, lbl in opts) + "</div>"
+    orig = lambda h: _ORIG_UNIT_RE.sub(lambda m: f" <small class='orig'>({m.group(1)})</small>", h)
+    # "▸ NA OMÁČKU" = heading of an ingredient group
+    ing_html = "".join(f"<li class='grp'>{x[1:].strip()}</li>" if x.startswith("▸") else f"<li>{orig(x)}</li>"
+                       for x in ings) or "<li>—</li>"
+    plain_steps = (device or base_platform) == "other"          # original steps of another website: no machine
+    chips = [dial_chips_html(st.get("dials"), ui, time_only=plain_steps) for st in data.get("steps", [])]
+    step_html = "".join(
+        f"<li><span class='n'>{i}</span><div>{orig(x)}"
+        + (f"<div class='dials'>{chips[i - 1]}</div>" if i - 1 < len(chips) and chips[i - 1] else "") + "</div></li>"
+        for i, x in enumerate(steps, 1)) or f"<li><div>{_st('no_steps', ui)}</div></li>"
     nut_html = ""
     if nut:
         cells = "".join(f"<div class='nut'><span>{html_mod.escape(k)}</span><b>{html_mod.escape(v)}</b></div>" for k, v in nut)
         nut_html = f"<section><h2>📊 {_st('nutrition', ui)}<small>{per}</small></h2><div class='nuts'>{cells}</div></section>"
-    tips_html = ("<section><h2>💡 " + _st('tips', ui) + "</h2><ul>" + "".join(f"<li>{html_mod.escape(t)}</li>" for t in tips) + "</ul></section>") if tips else ""
-    card_link = f"<a class='orig' href='{html_mod.escape(card_url)}'>📄 {_st('orig_card', ui)}</a>" if card_url else ""
-    return f"""<!DOCTYPE html><html lang="{ui}"><head><meta charset="utf-8">
+    tips_html = ("<section><h2>💡 " + _st('tips', ui) + "</h2><ul class='tips'>" +
+                 "".join(f"<li>{html_mod.escape(t)}</li>" for t in tips) + "</ul></section>") if tips else ""
+    foot = ""
+    if src_url:
+        foot = (f"<footer>{_st('credit', ui)} <a href='{html_mod.escape(src_url)}'>{html_mod.escape(site['name'])}</a>"
+                + (f" · {_st('author', ui)}: {html_mod.escape(author)}" if author else "") + f". {_st('personal', ui)}</footer>")
+    return f"""<!DOCTYPE html><html lang="{ui}" data-theme="{th}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>
- body {{ margin:0; background:#121212; color:#ECECEC; font:16px/1.5 -apple-system,'Segoe UI',Roboto,sans-serif; }}
- .wrap {{ max-width:760px; margin:0 auto; padding:12px 14px 40px; }}
- h1 {{ color:{'#00E5FF' if is_mcs else '#00E676'}; font-size:22px; margin:6px 0 4px; }}
- .meta {{ color:#9E9E9E; font-size:14px; margin-bottom:10px; }}
- .hero {{ width:100%; border-radius:12px; display:block; margin:6px 0 12px; }}
- section {{ background:#1E1E1E; border-radius:12px; padding:12px 14px; margin:12px 0; }}
- h2 {{ margin:0 0 8px; font-size:17px; color:{'#80D8FF' if is_mcs else '#69F0AE'}; }}
- h2 small {{ color:#9E9E9E; font-weight:normal; font-size:13px; }}
- ul, ol {{ margin:0; padding-left:20px; }} li {{ margin:4px 0; }}
- ol li {{ margin:8px 0; }}
- ol li span {{ white-space:normal; display:inline; padding:0 4px !important; }}
- .nuts {{ display:grid; grid-template-columns:1fr 1fr; gap:6px; }}
- .nut {{ background:#262626; border-radius:8px; padding:6px 8px; display:flex; justify-content:space-between; gap:6px; font-size:14px; }}
- .nut span {{ color:#BDBDBD; }}
- a.orig {{ display:inline-block; margin-top:6px; color:#B39DDB; font-weight:bold; text-decoration:none; }}
+ :root {{ --bg:#121212; --card:#1E1E1E; --soft:#262626; --txt:#ECECEC; --muted:#9E9E9E; --line:#2E2E2E;
+          --acc:{'#00E5FF' if is_mcs else '#00E676'}; --acc2:{'#80D8FF' if is_mcs else '#69F0AE'}; }}
+ [data-theme=light] {{ --bg:#F4F2EE; --card:#FFFFFF; --soft:#F1EEE8; --txt:#222; --muted:#6B6B6B; --line:#E4DED4;
+          --acc:{accent}; --acc2:{accent}; }}
+ * {{ box-sizing:border-box; }}
+ body {{ margin:0; background:var(--bg); color:var(--txt); font:16px/1.55 -apple-system,'Segoe UI',Roboto,sans-serif; }}
+ .wrap {{ max-width:1100px; margin:0 auto; padding:14px 16px 40px; }}
+ .top {{ display:grid; grid-template-columns:minmax(0,1.1fr) minmax(0,1fr); gap:22px; align-items:start; }}
+ .hero {{ width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:14px; display:block; background:var(--soft); }}
+ h1 {{ color:var(--acc); font-size:28px; line-height:1.2; margin:4px 0 8px; }}
+ .by {{ color:var(--muted); font-size:14px; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:center; margin-bottom:10px; }}
+ .by b {{ color:var(--txt); }}
+ a.src {{ color:#fff; background:var(--site); padding:3px 10px; border-radius:20px; text-decoration:none; font-weight:600; }}
+ .desc {{ color:var(--muted); margin:6px 0 12px; }}
+ .chips {{ display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }}
+ .chip {{ background:var(--soft); border:1px solid var(--line); border-radius:20px; padding:3px 11px; font-size:14px; }}
+ .devs {{ display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 0; }}
+ a.dev {{ color:var(--txt); text-decoration:none; border:1px solid var(--line); border-radius:8px; padding:5px 11px; font-size:14px; }}
+ a.dev.on {{ background:var(--acc); color:#000; border-color:var(--acc); font-weight:bold; }}
+ .cols {{ display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.7fr); gap:18px; margin-top:18px; align-items:start; }}
+ section {{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; margin:0 0 16px; }}
+ h2 {{ margin:0 0 10px; font-size:18px; color:var(--acc2); }}
+ h2 small {{ color:var(--muted); font-weight:normal; font-size:13px; }}
+ ul {{ margin:0; padding-left:20px; }} ul li {{ margin:5px 0; }}
+ ol.steps {{ list-style:none; margin:0; padding:0; }}
+ ol.steps li {{ display:flex; gap:12px; padding:10px 0; border-bottom:1px solid var(--line); }}
+ ol.steps li:last-child {{ border-bottom:0; }}
+ ol.steps .n {{ flex:0 0 28px; height:28px; border-radius:50%; background:var(--acc); color:#000; font-weight:bold;
+               display:flex; align-items:center; justify-content:center; font-size:14px; }}
+ ol.steps li span {{ white-space:normal; }}
+ .dials {{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }}
+ .dial {{ background:var(--soft); border:1px solid var(--line); color:var(--acc2); border-radius:6px; padding:1px 8px;
+          font-size:13px; font-weight:600; white-space:nowrap; }}
+ small.orig {{ color:var(--muted); font-size:12px; }}
+ li.grp {{ list-style:none; margin:12px 0 4px -20px; color:var(--acc2); font-weight:bold; font-size:14px; text-transform:none; }}
+ .nuts {{ display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:6px; }}
+ .nut {{ background:var(--soft); border-radius:8px; padding:6px 9px; display:flex; justify-content:space-between; gap:6px; font-size:14px; }}
+ .nut span {{ color:var(--muted); }}
+ footer {{ color:var(--muted); font-size:13px; margin-top:6px; }} footer a {{ color:var(--acc2); }}
+ @media (max-width: 760px) {{ .top, .cols {{ grid-template-columns:1fr; }} h1 {{ font-size:23px; }} }}
 </style></head><body><div class="wrap">
-<h1>{title}</h1><div class="meta">{' · '.join(meta)}</div>
-{img}
-<section><h2>🛒 {_st('ingredients', ui)}</h2><ul>{''.join(f'<li>{x}</li>' for x in ings) or '<li>—</li>'}</ul></section>
-{nut_html}
-<section><h2>📋 {_st('steps', ui)}</h2><ol>{''.join(f'<li>{x}</li>' for x in steps) or '<li>' + _st('no_steps', ui) + '</li>'}</ol></section>
-{tips_html}
-{card_link}
+<div class="top"><div>{img}</div><div>
+<h1>{title}</h1>
+<div class="by">{' '.join(by)}</div>
+{f"<p class='desc'>{html_mod.escape(desc)}</p>" if desc else ""}
+<div class="chips">{meta_chips}</div>
+{dev_links}
+</div></div>
+<div class="cols">
+<div><section><h2>🛒 {_st('ingredients', ui)}</h2><ul>{ing_html}</ul></section>{nut_html}</div>
+<div><section><h2>📋 {_st('steps', ui)}</h2><ol class="steps">{step_html}</ol></section>{tips_html}</div>
+</div>
+{foot}
 </div></body></html>"""
 
 
 # ==========================================
-# HROMADNÝ PŘEKLAD (všechny recepty do EN i CZ, na pozadí)
+# BULK TRANSLATION (all recipes into EN and CZ, in the background)
 # ==========================================
-BULK_TR = {"running": False, "stop": False, "done": 0, "total": 0, "failed": 0, "current": "", "errors": []}
+BULK_TR = Job("hromadný překlad")          # data: done, total, failed, current, errors
 
 
 def bulk_translation_todo(langs=("en", "cs")) -> list[tuple[Path, str, str, str]]:
-    """Seznam (složka, jazyk, stroj, název), které ještě nemají překlad."""
+    """List of (folder, language, machine, title) that have no translation yet."""
     todo = []
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute("SELECT title, folder_path, source_platform FROM recipes ORDER BY title").fetchall()
@@ -4522,30 +5218,34 @@ def bulk_translation_todo(langs=("en", "cs")) -> list[tuple[Path, str, str, str]
 
 
 def run_bulk_translation(todo: list):
-    BULK_TR.update(running=True, stop=False, done=0, total=len(todo), failed=0, current="", errors=[])
+    """Translates the list from bulk_translation_todo() in this (background) thread. The GUI starts BULK_TR before
+    the thread so its first poll never sees an idle job; started on its own (tests) it starts the job itself."""
+    if not BULK_TR.running:
+        BULK_TR.start()
+    BULK_TR.progress(done=0, total=len(todo), failed=0, current="", errors=[])
+    d = BULK_TR.data
     try:
         for folder, lang, dev, title in todo:
-            if BULK_TR["stop"]:
+            if BULK_TR.cancel_requested:
                 break
-            BULK_TR["current"] = f"{title} → {lang.upper()}"
+            BULK_TR.progress(current=f"{title} → {lang.upper()}")
             lock = _FOLDER_LOCKS.setdefault(str(Path(folder).resolve()), threading.Lock())
             try:
                 with lock:
                     res, _ = generate_translated_files(folder, lang, target_device=dev)
                 if not res:
-                    BULK_TR["failed"] += 1
+                    BULK_TR.progress(failed=d["failed"] + 1)
             except Exception as e:
-                BULK_TR["failed"] += 1
-                BULK_TR["errors"].append(f"{title} ({lang}): {e}")
+                BULK_TR.progress(failed=d["failed"] + 1, errors=d["errors"] + [f"{title} ({lang}): {e}"])
                 log(f"Hromadný překlad {title} → {lang} selhal: {e}")
-            BULK_TR["done"] += 1
+            BULK_TR.progress(done=d["done"] + 1)
     finally:
-        BULK_TR["running"] = False
-        BULK_TR["current"] = ""
+        BULK_TR.progress(current="")
+        BULK_TR.finish(tx("Hromadný překlad zastaven.") if BULK_TR.cancel_requested else "")
 
 
 # ==========================================
-# RECEPTY Z DALŠÍCH WEBŮ (knihovna recipe-scrapers – volitelná: py -m pip install recipe-scrapers)
+# RECIPES FROM OTHER WEBSITES (recipe-scrapers library – optional: py -m pip install recipe-scrapers)
 # ==========================================
 _RS = {"loaded": False, "fn": None}
 
@@ -4558,7 +5258,7 @@ def has_recipe_scrapers() -> bool:
 
 
 def scrape_other_recipe(html: str, url: str) -> dict | None:
-    """Název, suroviny, kroky, porce, časy a obrázek z libovolné stránky s receptem. Bez knihovny → None."""
+    """Title, ingredients, steps, servings, times and image from any recipe page. Without the library → None."""
     if not _RS["loaded"]:
         _RS["loaded"] = True
         try:
@@ -4608,40 +5308,46 @@ def other_recipe_id(url: str) -> str:
 
 
 # ==========================================
-# VYHLEDÁVÁNÍ RECEPTŮ NA WEBECH + VE VLASTNÍ KUCHAŘCE
-# Webové hledání běží v aplikaci na počítači (skryté stránky prohlížeče, i s přihlášením do Cookidoo);
-# stránka s výsledky (/search) se průběžně obnovuje. Zdroje jdou upravit v config.json → "search_sources".
+# RECIPE SEARCH ON WEBSITES + IN YOUR OWN COOKBOOK
+# Web search runs in the desktop app (hidden browser pages, also with the Cookidoo login);
+# the results page (/search) refreshes itself. Sources can be changed in config.json → "search_sources".
 # ==========================================
 DEFAULT_SEARCH_SOURCES = [
-    {"id": "cookidoo", "name": "Cookidoo", "color": "#00A651", "url": "https://cookidoo.cz/search/cs-CZ?query={q}",
+    {"id": "cookidoo", "lang": "cs", "name": "Cookidoo", "color": "#00A651", "url": "https://cookidoo.cz/search/cs-CZ?query={q}",
      "home": "https://cookidoo.cz/foundation/cs-CZ", "icon": "🟢",
      "link": r"cookidoo\.[a-z.]+/recipes/recipe/[a-zA-Z-]+/r\d+", "enabled": True},
-    {"id": "mcs", "name": "Monsieur Cuisine", "color": "#1565C0", "url": "https://www.monsieur-cuisine.com/cs/vyhledavani?q={q}",
+    {"id": "mcs", "lang": "cs", "name": "Monsieur Cuisine", "color": "#1565C0", "url": "https://www.monsieur-cuisine.com/cs/vyhledavani?q={q}",
      "home": "https://www.monsieur-cuisine.com/cs/recepty", "icon": "🔵",
      "link": r"monsieur-cuisine\.com/[a-z]{2}/recipe/[^/?#]+", "enabled": True},
-    {"id": "iprima", "name": "Prima FRESH", "color": "#D81B60", "url": "https://fresh.iprima.cz/vyhledat/{q}",
+    {"id": "iprima", "lang": "cs", "name": "Prima FRESH", "color": "#D81B60", "url": "https://fresh.iprima.cz/vyhledat/{q}",
      "home": "https://fresh.iprima.cz/recepty", "icon": "🍅",
-     "link": r"fresh\.iprima\.cz/(?!videa/)[^#?]+", "scope": ".search-articles-list", "enabled": True},
-    {"id": "chefkoch", "name": "Chefkoch", "color": "#E2001A", "url": "https://www.chefkoch.de/rs/s0/{q}/Rezepte.html",
-     "home": "https://www.chefkoch.de/", "icon": "🇩🇪",
-     "link": r"chefkoch\.de/rezepte/\d+/", "scope": ".recipe-list", "enabled": True},
-    {"id": "allrecipes", "name": "Allrecipes", "color": "#F37021", "url": "https://www.allrecipes.com/search?q={q}",
+     "link": r"fresh\.iprima\.cz/(?!videa/|magazin/)[^#?]+", "scope": ".search-articles-list", "enabled": True,
+     # video recipes: many have only ingredients, the method is just in the video → checked before they are shown
+     "check_method": r"/videorecepty/"},
+    # Chefkoch was removed in 1.6: since November 2026 it answers every embedded browser (QtWebEngine, also the newest
+    # one) with HTTP 403, so neither searching nor saving works there. Do not work around its bot protection.
+    {"id": "allrecipes", "lang": "en", "name": "Allrecipes", "color": "#F37021", "url": "https://www.allrecipes.com/search?q={q}",
      "home": "https://www.allrecipes.com/", "icon": "🇺🇸",
      "link": r"allrecipes\.com/(?:recipe/\d+/|[a-z0-9-]+-recipe-\d+)", "enabled": True},
-    {"id": "bbcgoodfood", "name": "BBC Good Food", "color": "#7B1FA2", "url": "https://www.bbcgoodfood.com/search?q={q}",
+    {"id": "bbcgoodfood", "lang": "en", "name": "BBC Good Food", "color": "#7B1FA2", "url": "https://www.bbcgoodfood.com/search?q={q}",
      "home": "https://www.bbcgoodfood.com/", "icon": "🇬🇧",
      "link": r"bbcgoodfood\.com/recipes/(?!collection/|category/)[a-z0-9-]+/?$", "enabled": True},
 ]
 SEARCH_STATE: dict = {}
 _SEARCH_QUEUE: list = []
-_SEARCH_LOCK = threading.Lock()
+_SEARCH_LOCK = threading.RLock()        # reentrant: machine listeners update SEARCH_STATE while it is held
 _LOCAL_ING_CACHE: dict = {}
 
 
 def search_sources() -> list[dict]:
     cfg = load_config().get("search_sources")
     if isinstance(cfg, list) and cfg:
-        return [s for s in cfg if isinstance(s, dict) and s.get("url") and s.get("link")]
+        defaults = {s["id"]: s for s in DEFAULT_SEARCH_SOURCES}
+        # a custom list from an older version lacks newer keys (site language, video check) → taken from the default
+        # source with the same id
+        return [dict({k: defaults.get(s.get("id"), {}).get(k) for k in ("lang", "check_method")
+                      if defaults.get(s.get("id"), {}).get(k)}, **{k: v for k, v in s.items() if v not in (None, "")})
+                for s in cfg if isinstance(s, dict) and s.get("url") and s.get("link")]
     return DEFAULT_SEARCH_SOURCES
 
 
@@ -4649,19 +5355,291 @@ def search_key_of(q: str, mode: str) -> str:
     return f"{mode}|{search_key(q).strip()}"
 
 
-def request_web_search(q: str, mode: str) -> dict:
-    """Založí (nebo vrátí běžící) hledání; aplikace na počítači si ho vyzvedne a spustí."""
+# A search term in another language than the website's: English sites get an English translation, Czech ones Czech.
+# The offline translator translates bare Czech dish names badly (zelňačka → “Greens”, svíčková → “Sinews”),
+# so a small dictionary goes first. Everything else goes through DeepL / Gemini / the offline translator and is remembered.
+DISH_CS_EN = {
+    "zelňačka": "sauerkraut soup", "kulajda": "dill soup", "bramboračka": "potato soup", "česnečka": "garlic soup",
+    "gulášovka": "goulash soup", "gulášová polévka": "goulash soup", "dršťková polévka": "tripe soup",
+    "hrachová polévka": "pea soup", "čočková polévka": "lentil soup", "houbová polévka": "mushroom soup",
+    "dýňová polévka": "pumpkin soup", "rajská polévka": "tomato soup", "kuřecí vývar": "chicken broth",
+    "hovězí vývar": "beef broth", "vývar": "broth", "polévka": "soup",
+    "svíčková": "beef sirloin in cream sauce", "guláš": "goulash", "segedínský guláš": "szegedin goulash",
+    "vepřo knedlo zelo": "roast pork with dumplings and sauerkraut", "knedlíky": "dumplings",
+    "houskové knedlíky": "bread dumplings", "bramborové knedlíky": "potato dumplings", "ovocné knedlíky": "fruit dumplings",
+    "bramborák": "potato pancakes", "bramboráky": "potato pancakes", "řízek": "schnitzel", "smažený sýr": "fried cheese",
+    "rajská omáčka": "tomato sauce", "koprovka": "dill sauce", "koprová omáčka": "dill sauce",
+    "buchty": "sweet buns", "koláč": "cake", "koláče": "kolache", "bábovka": "bundt cake", "lívance": "pancakes",
+    "palačinky": "crepes", "trdelník": "chimney cake", "vánočka": "christmas bread", "perník": "gingerbread",
+    "cukroví": "christmas cookies", "štrúdl": "strudel", "jablečný závin": "apple strudel", "závin": "strudel",
+    "tvarohový koláč": "cheesecake", "kynuté knedlíky": "yeast dumplings", "utopenci": "pickled sausages",
+    "nakládaný hermelín": "marinated camembert", "bramborový salát": "potato salad", "kysané zelí": "sauerkraut",
+    "zelí": "cabbage", "krevety": "shrimp", "losos": "salmon", "kuře": "chicken", "kuřecí": "chicken", "vepřové": "pork",
+    "hovězí": "beef", "kachna": "duck", "husa": "goose", "chléb": "bread", "rizoto": "risotto", "cuketa": "zucchini",
+    "lilek": "eggplant", "dýně": "pumpkin", "čočka": "lentils", "fazole": "beans", "brambory": "potatoes",
+    "mrkev": "carrot", "špenát": "spinach", "houby": "mushrooms", "tvaroh": "quark", "těstoviny": "pasta",
+}
+_DISH_IDX = {search_key(k): v for k, v in DISH_CS_EN.items()}
+_DISH_IDX_EN = {}
+for _cs, _en in DISH_CS_EN.items():
+    _DISH_IDX_EN.setdefault(_en, _cs)
+_EN_QUERY_WORDS = set(" ".join(DISH_CS_EN.values()).split()) | {
+    "cake", "pie", "stew", "roast", "salad", "sauce", "curry", "pancake", "pancakes", "cookies", "cookie", "muffin", "muffins",
+    "bread", "rice", "noodles", "pasta", "beef", "pork", "chicken", "fish", "shrimps", "prawn", "prawns", "lamb", "egg", "eggs",
+    "cheese", "chocolate", "apple", "lemon", "banana", "strawberry", "cream", "butter", "garlic", "onion", "tomato", "tomatoes",
+    "potato", "cabbage", "carrot", "mushroom", "pumpkin", "spinach", "lentil", "bean", "pea", "peas", "with", "and", "the",
+    "easy", "quick", "vegan", "vegetarian", "baked", "fried", "grilled", "roasted", "homemade", "spicy", "sweet", "soup",
+}
+_CS_QUERY_CHARS = re.compile(r'[áčďéěíňóřšťúůýž]', re.IGNORECASE)
+_QUERY_TR_CACHE: dict = {}
+_QUERY_TR_LOCK = threading.Lock()
+_QUERY_TR_FILE = BASE_DIR / "search_translations.json"
+
+
+def detect_query_lang(q: str, default: str = "cs") -> str:
+    """Language of the search term (cs / en). A short text cannot be recognised reliably: accents, the dish dictionary
+    and common English words decide; otherwise the interface language."""
+    if _CS_QUERY_CHARS.search(q or ""):
+        return "cs"
+    key = search_key(q).strip()
+    if key in _DISH_IDX or any(w in _DISH_IDX for w in key.split()):
+        return "cs"
+    if any(w in _EN_QUERY_WORDS for w in re.findall(r"[a-z]+", key)):
+        return "en"
+    return default if default in ("cs", "en") else "cs"
+
+
+def query_lang_sure(q: str) -> bool:
+    """True when the language of the term is clear (Czech accents, the dish dictionary, common English words).
+    "spaghetti", "pho", "gulas"… are not clear: they are searched as typed first and translated only as a fallback
+    (Argos made “spagetti” out of “spaghetti”)."""
+    key = search_key(q).strip()
+    return bool(_CS_QUERY_CHARS.search(q or "") or key in _DISH_IDX or any(w in _DISH_IDX for w in key.split())
+                or any(w in _EN_QUERY_WORDS for w in re.findall(r"[a-z]+", key)))
+
+
+def _dict_translate_query(q: str, src: str, tgt: str) -> str:
+    key = search_key(q).strip()
+    if src == "cs" and tgt == "en":
+        if key in _DISH_IDX:
+            return _DISH_IDX[key]
+        words = key.split()
+        if words and all(w in _DISH_IDX for w in words):
+            return " ".join(_DISH_IDX[w] for w in words)
+    if src == "en" and tgt == "cs":
+        return _DISH_IDX_EN.get(q.strip().lower(), "")
+    return ""
+
+
+def translate_query(q: str, src: str, tgt: str) -> str:
+    """The search term in the website's language: dictionary → cache → DeepL / Gemini / offline translator. If that fails, returns ""."""
+    q = (q or "").strip()
+    if not q or src == tgt:
+        return q
+    ck = f"{src}>{tgt}|{search_key(q).strip()}"
+    with _QUERY_TR_LOCK:
+        if not _QUERY_TR_CACHE and _QUERY_TR_FILE.exists():
+            try:
+                _QUERY_TR_CACHE.update(json.loads(_QUERY_TR_FILE.read_text(encoding="utf-8")))
+            except Exception:
+                pass
+        if ck in _QUERY_TR_CACHE:
+            return _QUERY_TR_CACHE[ck]
+    out = _dict_translate_query(q, src, tgt)
+    if not out:
+        try:
+            if (HAS_DEEPL and load_api_key()) or load_gemini_key():
+                out = translate_strings([q], tgt, src)[0][0]
+            elif has_argos():
+                # without the bulk translation lock – a short term must not wait until all recipes are translated
+                out = argos_call({"action": "translate", "src": src, "tgt": tgt, "texts": [q]}, 300)["texts"][0]
+        except Exception as e:
+            log(f"Překlad hledaného výrazu „{q}“ ({src}→{tgt}) selhal: {e}")
+            return ""
+    out = re.sub(r"\s+", " ", (out or "").strip().strip(".!?\"'„“")).lower()
+    if not out:
+        return ""
+    with _QUERY_TR_LOCK:
+        _QUERY_TR_CACHE[ck] = out
+        try:
+            _QUERY_TR_FILE.write_text(json.dumps(_QUERY_TR_CACHE, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception as e:
+            log(f"Mezipaměť překladů hledání nejde uložit: {e}")
+    return out
+
+
+def search_plan(qlang: str, src_lang: str, sure: bool = True) -> list[str]:
+    """Order of attempts for one website: "" = the term as typed, "cs>en" = translated from cs into en.
+    The next attempt comes only when the previous one found nothing."""
+    both = src_lang in ("cs", "en") and qlang in ("cs", "en")
+    if not src_lang:
+        return [""]
+    if src_lang == qlang:
+        if sure or not both:
+            return [""]
+        other = "en" if src_lang == "cs" else "cs"
+        return ["", f"{other}>{src_lang}"]    # maybe the term was in the other language after all
+    if both:
+        # website in the other language: a clearly Czech/English term is translated right away (the original returns
+        # nonsense there); an unclear one is tried as typed first
+        return [f"{qlang}>{src_lang}"] if sure else ["", f"{qlang}>{src_lang}"]
+    return ["", f"{qlang}>en"] if qlang != "en" else [""]   # e.g. a German site from a custom list: as typed, then in English
+
+
+def _source_url(cfg_url: str, q: str) -> str:
+    return cfg_url.replace("{q}", urllib.parse.quote(q))
+
+
+# One machine per (search, website). Attempts follow search_plan(); a retry goes back to translating / queued.
+#   idle → translating (the term must be translated first) | queued (waits for the desktop browser)
+#   queued → searching (a hidden page is open) → done | error, or → translating / queued for the next attempt
+# The results page reads only SEARCH_STATE[...]["state"] – the listener maps the machine onto its strings there.
+SOURCE_SEARCH_FLOW = {"idle": {"translating", "queued", "done", "blocked"}, "translating": {"queued", "done"},
+                      "queued": {"searching"}, "searching": {"translating", "queued", "done", "error", "blocked"},
+                      "done": set(), "error": set(), "blocked": set()}
+_PAGE_STATE = {"idle": "pending", "translating": "translating", "queued": "pending", "searching": "pending",
+               "done": "done", "error": "error", "blocked": "blocked"}
+_SEARCH_MACHINES: dict = {}             # (search key, source id) → StateMachine
+# A website that refused the hidden search page (HTTP 403 / 429 – bot protection) is left alone for an hour: asking
+# again would only make the block longer, and it also blocks the user's normal browsing of that site.
+SEARCH_BLOCK_PAUSE = 3600
+_BLOCKED_SITES: dict = {}               # source id → when it refused us
+
+
+def site_blocked(sid: str) -> bool:
+    return time.time() - _BLOCKED_SITES.get(sid, 0) < SEARCH_BLOCK_PAUSE
+
+
+def mark_site_blocked(sid: str, why: str):
+    _BLOCKED_SITES[sid] = time.time()
+    log(f"Hledání: web {sid} odmítl automatické hledání ({why}) – hodinu se ho nebudu ptát")
+
+
+def source_search_machine(key: str, sid: str):
+    return _SEARCH_MACHINES.get((key, sid))
+
+
+def request_web_search(q: str, mode: str, ui: str = "cs") -> dict:
+    """Creates (or returns the running) search; the desktop app picks it up and runs it."""
     key = search_key_of(q, mode)
+    new = False
     with _SEARCH_LOCK:
         st = SEARCH_STATE.get(key)
         if st is None or time.time() - st["started"] > 1800:
-            st = {"q": q, "mode": mode, "started": time.time(), "sources": {
+            qlang, sure = detect_query_lang(q, ui), query_lang_sure(q)
+            st = {"q": q, "mode": mode, "qlang": qlang, "started": time.time(), "sources": {
                 s["id"]: {"name": s["name"], "color": s.get("color", "#555"), "state": "pending", "results": [],
-                          "search_url": s["url"].replace("{q}", urllib.parse.quote(q))}
+                          "lang": s.get("lang", ""), "plan": search_plan(qlang, s.get("lang", ""), sure), "step": -1,
+                          "tried": [], "query": q, "note": "", "url_tpl": s["url"], "search_url": _source_url(s["url"], q)}
                 for s in search_sources() if s.get("enabled", True)}}
             SEARCH_STATE[key] = st
-            _SEARCH_QUEUE.append(key)
+            for k in [k for k in _SEARCH_MACHINES if k[0] == key]:
+                del _SEARCH_MACHINES[k]                # an expired search starts with new machines
+            for sid, src in st["sources"].items():
+                m = StateMachine(f"hledání {sid}: {q}", SOURCE_SEARCH_FLOW, "idle", log_transitions=False)
+
+                def sync(old, new, mm, src=src):
+                    with _SEARCH_LOCK:
+                        src["state"] = _PAGE_STATE[new]
+                m.on_change(sync)
+                _SEARCH_MACHINES[(key, sid)] = m
+            new = True
+    if new:
+        for sid in list(st["sources"]):
+            if site_blocked(sid):
+                _SEARCH_MACHINES[(key, sid)].go("blocked")   # it refused us a moment ago – do not ask again yet
+            elif not advance_search_source(key, sid):
+                _SEARCH_MACHINES[(key, sid)].go("done")
+    with _SEARCH_LOCK:
         return json.loads(json.dumps(st))
+
+
+def advance_search_source(key: str, sid: str) -> bool:
+    """Next attempt by the plan (translation in the background, then into the queue for the browser). False = no further attempt."""
+    m = source_search_machine(key, sid)
+    while True:
+        with _SEARCH_LOCK:
+            st = SEARCH_STATE.get(key)
+            s = st and st["sources"].get(sid)
+            if not s or m is None:
+                return False
+            s["step"] += 1
+            if s["step"] >= len(s["plan"]):
+                return False
+            tgt = s["plan"][s["step"]]
+            if not tgt:
+                if search_key(st["q"]) in s["tried"]:
+                    continue                          # the website already got the same term (the translation came out the same)
+                s.update(query=st["q"], note="", search_url=_source_url(s["url_tpl"], st["q"]))
+                s["tried"].append(search_key(st["q"]))
+                if not m.go("queued"):
+                    return False
+                _SEARCH_QUEUE.append((key, sid))
+                return True
+            if not m.go("translating"):
+                return False
+            q = st["q"]
+            src_l, tgt = tgt.split(">", 1)
+        threading.Thread(target=_translate_then_search, args=(key, sid, q, src_l, tgt), daemon=True).start()
+        return True
+
+
+def _translate_then_search(key: str, sid: str, q: str, qlang: str, tgt: str):
+    tq = translate_query(q, qlang, tgt) or q          # no translator → at least the term as typed
+    m = source_search_machine(key, sid)
+    with _SEARCH_LOCK:
+        st = SEARCH_STATE.get(key)
+        s = st and st["sources"].get(sid)
+        if not s or m is None:
+            return
+        ok = bool(tq) and search_key(tq) not in s["tried"]
+        if ok:
+            s.update(query=tq, note=tq if search_key(tq) != search_key(q) else "", search_url=_source_url(s["url_tpl"], tq))
+            s["tried"].append(search_key(tq))
+            m.go("queued")
+            _SEARCH_QUEUE.append((key, sid))
+    if not ok and not advance_search_source(key, sid):
+        m.go("done")                                  # translation is not possible and nothing else is in the plan
+
+
+def recipe_has_method(url: str) -> bool | None:
+    """Does the recipe page have a method (JSON-LD recipeInstructions)? False = a recipe without one (a video
+    recipe: ingredients only, the method is in the video), None = cannot tell (no JSON-LD, network error) → keep it."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": ASSET_UA, "Accept": "text/html"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            page = resp.read(2_000_000).decode("utf-8", "ignore")
+    except Exception:
+        return None
+    found = None
+    for m in re.finditer(r'<script[^>]+ld\+json[^>]*>(.*?)</script>', page, re.S | re.I):
+        try:
+            data = json.loads(m.group(1))
+        except Exception:
+            continue
+        stack = [data]
+        while stack:
+            it = stack.pop()
+            if isinstance(it, list):
+                stack.extend(it)
+            elif isinstance(it, dict):
+                stack.extend(v for k, v in it.items() if k == "@graph")
+                if "Recipe" in str(it.get("@type", "")):
+                    if it.get("recipeInstructions"):
+                        return True
+                    found = False
+    return found
+
+
+def drop_results_without_method(results: list[dict], pattern: str) -> list[dict]:
+    """Removes results whose URL matches pattern and whose page has no method. Other results are not fetched."""
+    keep = []
+    for r in results:
+        if re.search(pattern, r.get("url", "")) and recipe_has_method(r["url"]) is False:
+            log(f"Hledání: vynechávám video recept bez postupu {r['url']}")
+            continue
+        keep.append(r)
+    return keep
 
 
 def _og_image(url: str) -> str:
@@ -4680,7 +5658,7 @@ def _og_image(url: str) -> str:
 
 
 def fill_missing_images(key: str, source_id: str, limit: int = 16):
-    """Výsledkům bez obrázku doplní obrázek z náhledu stránky receptu (og:image) – na pozadí, stránka se sama obnoví."""
+    """Gives results without an image the image from the recipe page preview (og:image) – in the background, the page refreshes itself."""
     with _SEARCH_LOCK:
         s = SEARCH_STATE.get(key, {}).get("sources", {}).get(source_id)
         if not s:
@@ -4700,8 +5678,8 @@ _SEARCH_STOP = {"a", "s", "se", "na", "v", "ve", "z", "ze", "do", "k", "ke", "o"
 
 
 def rank_search_results(results: list[dict], q: str, mode: str) -> list[dict]:
-    """Hledání podle názvu: výsledky, které hledané slovo opravdu obsahují (v názvu nebo adrese), dopředu.
-    Slovo se porovnává bez diakritiky a podle kmene („zelňačka“ najde i „Zelná polévka“)."""
+    """Search by name: results that really contain the search word (in the title or address) go first.
+    The word is compared without accents and by its stem (“zelňačka” also finds “Zelná polévka”)."""
     if mode != "title":
         return results
     stems = [w[:max(4, len(w) - 3)] for w in re.findall(r'\w+', search_key(q)) if w not in _SEARCH_STOP and len(w) > 2]
@@ -4712,7 +5690,7 @@ def rank_search_results(results: list[dict], q: str, mode: str) -> list[dict]:
         blob = search_key(f"{r.get('title', '')} {urllib.parse.unquote(r.get('url', ''))}")
         return sum(1 for s in stems if s in blob)
 
-    return sorted(results, key=lambda r: -hit(r))           # stabilní řazení: jinak pořadí webu
+    return sorted(results, key=lambda r: -hit(r))           # stable sort: otherwise the website's order
 
 
 def local_search(q: str, mode: str, limit: int = 30) -> list[dict]:
@@ -4756,16 +5734,23 @@ def local_search(q: str, mode: str, limit: int = 30) -> list[dict]:
 
 SEARCH_EXTRACT_JS = r"""
 (() => {
-  try { window.scrollBy(0, Math.max(900, window.innerHeight || 900)); } catch (e) {}   // líně načítané obrázky
+  try { window.scrollBy(0, Math.max(900, window.innerHeight || 900)); } catch (e) {}   // lazily loaded images
   const re = new RegExp(%PATTERN%, 'i');
   const bad = /icon|logo|device-pic|avatar|sprite|placeholder|blank|spacer|\.svg/i;
+  // srcset: “url 93w, url 186w” – the address itself may contain a comma (BBC Good Food: ?resize=372,338) → take the
+  // last (largest) address with a width descriptor; a plain split on commas returned the nonsense “338”
+  const fromSrcset = ss => {
+    const m = [...ss.matchAll(/(\S+?)\s+\d+(?:\.\d+)?[wx]\s*(?:,|$)/g)];
+    if (m.length) return m[m.length - 1][1].replace(/^,/, '');
+    return ss.split(/,\s+/).pop().trim().split(/\s+/)[0];
+  };
   const imgSrc = el => {
     if (!el) return '';
-    const vm = el.__vue__;                                 // Vue komponenty (Monsieur Cuisine) mají obrázek jen v datech
+    const vm = el.__vue__;                                 // Vue components (Monsieur Cuisine) have the image only in their data
     const vsrc = vm ? (typeof vm.src === 'string' ? vm.src : (vm.src && vm.src.src) || '') : '';
     const cand = [el.currentSrc, el.getAttribute && el.getAttribute('src'), el.dataset && (el.dataset.src || el.dataset.lazySrc || el.dataset.original), vsrc];
     const ss = (el.getAttribute && (el.getAttribute('srcset') || el.getAttribute('data-srcset') || el.getAttribute('data-lazy-srcset'))) || '';
-    if (ss) cand.push(ss.split(',').pop().trim().split(' ')[0]);
+    if (ss) cand.push(fromSrcset(ss));
     if (el.attributes) for (const at of el.attributes) {
       const v = (at.value || '').trim();
       if (/^(https?:)?\/\/|^\//.test(v) && /\.(jpe?g|png|webp|avif)(\?|$|\s)|\/image|\/img|images?\//i.test(v)) cand.push(v.split(/[\s,]/)[0]);
@@ -4775,8 +5760,12 @@ SEARCH_EXTRACT_JS = r"""
   };
   const bgSrc = el => { const m = (el.getAttribute('style') || '').match(/url\(['"]?([^'")]+)/); return m && !bad.test(m[1]) ? new URL(m[1], location.href).href : ''; };
   const clean = s => (s || '').replace(/\s+/g, ' ').replace(/^(Zum Rezept|Rezept|Recipe|Recept)\s*:?\s*/i, '').trim();
-  // Web nic nenašel a místo výsledků ukazuje „populární recepty“ (MCS, Allrecipes…) → žádné výsledky
+  // The website found nothing and shows “popular recipes” instead (MCS, Allrecipes…) → no results
   const pageText = (document.body && document.body.innerText) || '';
+  // bot protection / access denied instead of results → report it, the app leaves the website alone for a while
+  if (/HTTP ERROR 40[3]|HTTP ERROR 429|access denied|zugriff verweigert|přístup .{0,40}odepřen|too many requests|are you a robot|captcha/i.test(pageText.slice(0, 3000))
+      && !document.querySelector('a[href]:not([href^="#"]) img'))
+    return JSON.stringify({blocked: true});
   if (/(^|[^\d])0\s+(recept|rezept|recipe|result|ergebnis|treffer)|nebyly nalezeny žádné|nenašli jsme žádn|žádné výsledky|keine (rezepte|ergebnisse|treffer)|no results|nothing found|no recipes found/i.test(pageText))
     return JSON.stringify({none: true});
   const out = new Map();
@@ -4817,7 +5806,11 @@ SEARCH_PAGE_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta na
  body { margin:0; background:var(--bg); color:var(--txt); font:15px/1.45 'Segoe UI',Roboto,sans-serif; }
  .wrap { max-width:1280px; margin:0 auto; padding:22px 18px 60px; }
  h1 { font-size:26px; margin:6px 0 4px; } .sub { color:var(--muted); margin-bottom:16px; }
- form { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+ form { display:flex; gap:8px; flex-wrap:wrap; margin:0; }
+ /* the search bar stays at the top while scrolling through results */
+ .bar { position:sticky; top:0; z-index:10; background:var(--bg); padding:10px 0; margin:0 -4px 8px; padding-left:4px; padding-right:4px; }
+ .bar.stuck { box-shadow:0 8px 14px -8px rgba(0,0,0,.85); border-bottom:1px solid #2A2A2A; }
+ .tq { color:#B39DDB; font-size:13px; }
  input[type=text] { flex:1; min-width:220px; font-size:18px; padding:12px 14px; border-radius:10px; border:1px solid #3A3A3A; background:#202020; color:var(--txt); }
  .seg { display:flex; border:1px solid #3A3A3A; border-radius:10px; overflow:hidden; }
  .seg label { padding:11px 14px; cursor:pointer; color:#CFCFCF; user-select:none; } .seg input { display:none; }
@@ -4847,12 +5840,12 @@ SEARCH_PAGE_HTML = r"""<!DOCTYPE html><html><head><meta charset="utf-8"><meta na
  .empty { color:var(--muted); padding:30px 0; text-align:center; }
 </style></head><body><div class="wrap">
 <h1 id="h"></h1><div class="sub" id="sub"></div>
-<form id="f" action="/search" method="get">
+<div class="bar" id="bar"><form id="f" action="/search" method="get">
  <input type="text" name="q" id="q" autocomplete="off">
  <div class="seg"><label><input type="radio" name="mode" value="title"><span id="m1"></span></label><label><input type="radio" name="mode" value="ingredient"><span id="m2"></span></label></div>
  <input type="hidden" name="ui" id="ui"><input type="hidden" name="desk" id="desk">
  <button class="go" id="go" type="submit"></button>
-</form>
+</form></div>
 <div class="hint" id="hint"></div>
 <div class="chips" id="chips"></div>
 <div class="sites"><span class="sl" id="sl"></span><span id="sites"></span></div>
@@ -4864,11 +5857,11 @@ const UI = P.get('ui') || 'cs', DESK = P.get('desk') === '1', Q = (P.get('q') ||
 const TT = {cs: {h:'🔎 Hledat recepty', sub:'Ve vlastní kuchařce i na webech s recepty – podle názvu nebo suroviny.', m1:'Název', m2:'Surovina', go:'Hledat',
   ph:'např. kulajda, svíčková, cuketa…', hint:'Otevři recept z webu a klikni nahoře na ⬇️ ULOŽIT RECEPT – uloží se do offline kuchařky.',
   mine:'📚 Moje kuchařka', wait:'hledám…', none:'nic nenalezeno', fail:'nepodařilo se načíst', open:'otevřít hledání na webu', found:'nalezeno',
-  saved:'v kuchařce', sites:'Procházet weby:', start:'Zadej název receptu nebo surovinu.', mobile:'Na mobilu se otevře původní web; uložit recept jde v aplikaci na počítači.'},
+  saved:'v kuchařce', blocked:'web odmítl automatické hledání – zkusím to zase za hodinu', tr:'překládám hledaný výraz…', as:'hledáno jako', sites:'Procházet weby:', start:'Zadej název receptu nebo surovinu.', mobile:'Na mobilu se otevře původní web; uložit recept jde v aplikaci na počítači.'},
  en: {h:'🔎 Search recipes', sub:'In your own cookbook and on recipe websites – by name or ingredient.', m1:'Name', m2:'Ingredient', go:'Search',
   ph:'e.g. goulash, risotto, zucchini…', hint:'Open a recipe from a website and click ⬇️ SAVE RECIPE at the top – it is saved to your offline cookbook.',
   mine:'📚 My cookbook', wait:'searching…', none:'nothing found', fail:'could not be loaded', open:'open the search on the website', found:'found',
-  saved:'in cookbook', sites:'Browse websites:', start:'Enter a recipe name or an ingredient.', mobile:'On a phone the original website opens; saving works in the desktop app.'}}[UI === 'en' ? 'en' : 'cs'];
+  saved:'in cookbook', blocked:'the website refused automatic search – trying again in an hour', tr:'translating the search term…', as:'searched as', sites:'Browse websites:', start:'Enter a recipe name or an ingredient.', mobile:'On a phone the original website opens; saving works in the desktop app.'}}[UI === 'en' ? 'en' : 'cs'];
 for (const k of ['h','sub','m1','m2','go']) document.getElementById(k).textContent = TT[k];
 const qi = document.getElementById('q'); qi.placeholder = TT.ph; qi.value = Q;
 document.querySelector(`input[name=mode][value=${MODE}]`).checked = true;
@@ -4896,8 +5889,10 @@ async function poll(){
     if (s.img_pending) pending = true;
     let st;
     if (s.state === 'pending') { pending = true; st = `<span class="spin"></span> ${TT.wait}`; }
+    else if (s.state === 'translating') { pending = true; st = `<span class="spin"></span> ${TT.tr}`; }
     else if (s.results.length) st = `${TT.found}: ${s.results.length}`;
-    else st = `${s.state === 'error' ? TT.fail : TT.none} – <a href="${esc(s.search_url)}"${DESK ? '' : ' target="_blank"'}>${TT.open}</a>`;
+    else st = `${s.state === 'blocked' ? TT.blocked : s.state === 'error' ? TT.fail : TT.none} – <a href="${esc(s.search_url)}"${DESK ? '' : ' target="_blank"'}>${TT.open}</a>`;
+    if (s.note && s.state !== 'translating') st += ` <span class="tq">· 🌍 ${TT.as} „${esc(s.note)}“</span>`;
     html += `<section><div class="sh"><span class="badge" style="background:${s.color}">${esc(s.name)}</span><span class="state">${st}</span></div>` +
       (s.results.length ? `<div class="grid">${s.results.map(r => card(r, s.name, s.color, false)).join('')}</div>` : '') + '</section>';
   }
@@ -4910,6 +5905,8 @@ document.getElementById('sl').textContent = TT.sites;
 fetch('/api/sources').then(r => r.json()).then(list => {
   document.getElementById('sites').innerHTML = list.map(s => `<a class="site" style="background:${esc(s.color)}" href="${esc(s.home)}"${DESK ? '' : ' target="_blank" rel="noopener"'}>${esc(s.icon || '')} ${esc(s.name)}</a>`).join(' ');
 }).catch(() => {});
+const BAR = document.getElementById('bar'), BAR_TOP = BAR.offsetTop;   // initial position (the sticky bar changes it)
+addEventListener('scroll', () => BAR.classList.toggle('stuck', scrollY > BAR_TOP + 4), {passive: true});
 poll();
 </script></body></html>"""
 
@@ -4924,6 +5921,43 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(html.encode("utf-8"))
 
+    def _send_recipe_card(self, folder: Path, r_id: str, lang: str, card_dev: str, qs: dict):
+        """The recipe card in the app's design (1.6). A missing translation is started and a wait page shown."""
+        retry = qs.get("retry", ["0"])[0] == "1"
+        dev = (qs.get("device", [""])[0] or card_dev).lower()
+        dev = dev if dev in ("tm6", "mcs", "other") else card_dev
+        if lang in ("en", "cs"):
+            if retry:
+                clear_translation(folder, lang)
+            tr_file = folder / f"{get_base_prefix_for_device(folder, dev)}_{lang}.json"
+            if not tr_file.exists() and (translation_available() or recipe_already_in(folder, dev, lang)):
+                job = start_translation_job(folder, lang, dev, force=retry)
+                if job["state"] != "done":
+                    self._send_html(_card_wait_page(job, r_id, lang))
+                    return
+        try:
+            scale = float(qs.get("scale", ["1"])[0])
+        except ValueError:
+            scale = 1.0
+        ui = qs.get("ui", [ui_lang()])[0]
+        theme = qs.get("theme", ["dark"])[0]
+        img_url = recipe_extras(folder).get("image", "")
+        img_src = ""
+        if img_url:
+            rel = asset_lookup(img_url)
+            img_src = ("/assets/" + rel) if rel else img_url
+            if not rel:
+                threading.Thread(target=cache_asset, args=(img_url, img_url), daemon=True).start()
+        nav = (f"/api/card?id={urllib.parse.quote(r_id)}&lang={lang}&ui={ui}&theme={theme}&scale={scale:g}"
+               f"&metric={qs.get('metric', ['1'])[0]}")
+        try:
+            html = render_recipe_sheet(folder, lang, dev, ui, "web", scale, qs.get("metric", ["1"])[0] != "0",
+                                       img_src, "", theme, nav)
+        except Exception as e:
+            log("Karta receptu selhala:\n" + traceback.format_exc())
+            html = f"<h3>{html_mod.escape(str(e))}</h3>"
+        self._send_html(html)
+
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/":
@@ -4936,7 +5970,7 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/recipes":
             conn = sqlite3.connect(DB_PATH)
             c = conn.cursor()
-            c.execute("SELECT recipe_id, title, category, is_favorite, source_platform, title_en, title_cs FROM recipes ORDER BY category, is_favorite DESC, title")
+            c.execute("SELECT recipe_id, title, category, is_favorite, source_platform, title_en, title_cs, url FROM recipes ORDER BY category, is_favorite DESC, title")
             items = [{
                 "recipe_id": r[0],
                 "title": r[1],
@@ -4944,6 +5978,7 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
                 "category_en": CATEGORY_EN.get(r[2] or "Nezařazené", r[2] or "Nezařazené"),
                 "is_favorite": bool(r[3]),
                 "source_platform": r[4] or "tm6",
+                "site_icon": site_info(r[7] or "", r[4] or "tm6")["icon"],
                 "title_en": r[5] or "",
                 "title_cs": r[6] or "",
                 "search": search_key(" ".join(x or "" for x in (r[1], r[5], r[6], r[2]))),
@@ -4990,7 +6025,7 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
             if lang in ("en", "cs"):
                 if json_file.exists():
                     tr_info = {"status": "done"}
-                elif not translation_available():
+                elif not translation_available() and not recipe_already_in(folder, device, lang):
                     tr_info = {"status": "unavailable",
                                "message": txl("⚠️ Překladač není nastaven – v desktopové aplikaci zadej ✨ Gemini klíč nebo nainstaluj argostranslate. Zobrazuji originál.", ui)}
                     json_file = folder / f"{prefix}.json"
@@ -5069,6 +6104,10 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
 
             folder = resolve_recipe_folder(row[0])
             card_dev = (row[1] or "tm6").lower()
+            if qs.get("view", [""])[0] != "page" and recipe_has_content(folder):
+                self._send_recipe_card(folder, r_id, lang, card_dev, qs)
+                return
+            # fallback: no ingredients and no method were extracted → the saved page as before
             ensure_clean_html_snapshot(folder)
             is_translated_card = False
 
@@ -5079,7 +6118,7 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
                     clear_translation(folder, lang)
                 if target_html.exists():
                     html_file, is_translated_card = target_html, True
-                elif not translation_available():
+                elif not translation_available() and not recipe_already_in(folder, card_dev, lang):
                     html_file = folder / "page_snapshot.html"
                 else:
                     job = start_translation_job(folder, lang, card_dev, force=retry)
@@ -5146,7 +6185,7 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
                             r["category"] = CATEGORY_EN.get(r["category"], r["category"])
                 except Exception as e:
                     log(f"Hledání v kuchařce selhalo: {e}")
-                resp["sources"] = request_web_search(q, mode)["sources"]
+                resp["sources"] = request_web_search(q, mode, qs.get("ui", ["cs"])[0])["sources"]
                 conn = sqlite3.connect(DB_PATH)
                 have = {r[0] for r in conn.execute("SELECT recipe_id FROM recipes")}
                 conn.close()
@@ -5206,8 +6245,8 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
                     else:
                         img_src = img_url
                         threading.Thread(target=cache_asset, args=(img_url, img_url), daemon=True).start()
-                card_url = f"/api/card?id={urllib.parse.quote(r_id)}&lang={lang}"
-                self._send_html(render_recipe_sheet(folder, lang, dev, ui, "web", scale, True, img_src, card_url))
+                nav = f"/api/sheet?id={urllib.parse.quote(r_id)}&lang={lang}&ui={ui}&scale={scale:g}"
+                self._send_html(render_recipe_sheet(folder, lang, dev, ui, "web", scale, True, img_src, "", "dark", nav))
             except Exception as e:
                 log("List receptu selhal:\n" + traceback.format_exc())
                 self._send_html(f"<h3>{html_mod.escape(str(e))}</h3>")
@@ -5226,7 +6265,7 @@ class LanCookidooHandler(BaseHTTPRequestHandler):
             elif target.suffix == ".woff":
                 ctype = "font/woff"
             data = target.read_bytes()
-            if target.suffix == ".css":                # písma a obrázky uvnitř stylů taky z uložených kopií
+            if target.suffix == ".css":                # fonts and images inside styles also from stored copies
                 data = localize_css(data.decode("utf-8", "replace"), self.headers.get("Host") or f"127.0.0.1:{LAN_PORT}").encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", ctype)
@@ -5285,8 +6324,10 @@ def start_lan_http_server():
         log(f"LAN server error: {e}")
 
 
-def local_card_url(recipe_id: str, lang: str = "orig") -> str:
-    return f"http://127.0.0.1:{LAN_PORT}/api/card?id={urllib.parse.quote(recipe_id)}&lang={lang}"
+def local_card_url(recipe_id: str, lang: str = "orig", **extra) -> str:
+    """The desktop recipe card; extra = device, theme, scale, metric, ui (left out when empty)."""
+    q = "".join(f"&{k}={urllib.parse.quote(str(v))}" for k, v in extra.items() if v not in (None, ""))
+    return f"http://127.0.0.1:{LAN_PORT}/api/card?id={urllib.parse.quote(recipe_id)}&lang={lang}{q}"
 
 
 def is_offline_card_url(url_str: str) -> bool:
@@ -5294,13 +6335,13 @@ def is_offline_card_url(url_str: str) -> bool:
 
 
 # ==========================================
-# ZÁLOHA RECEPTŮ (.7z): export vybraných receptů a jejich import – i na jiném počítači
-# Archiv: manifest.json + recipes/<složka receptu>/… + web_assets/<styly, písma, obrázky karet>
-#         + web_assets/index.part.json (adresa z webu → soubor), aby karta receptu fungovala i bez internetu.
+# RECIPE BACKUP (.7z): export of selected recipes and their import – also on another computer
+# Archive: manifest.json + recipes/<recipe folder>/… + web_assets/<card styles, fonts, images>
+#          + web_assets/index.part.json (web address → file), so the recipe card works without internet too.
 # ==========================================
 try:
     import py7zr
-except Exception:                         # volitelné – bez knihovny jsou export a import jen vypnuté
+except Exception:                         # optional – without the library export and import are just turned off
     py7zr = None
 
 EXPORT_DIR = BASE_DIR / "exported_recipes"
@@ -5314,7 +6355,7 @@ def has_py7zr() -> bool:
 
 
 def _card_asset_entries(folder: Path) -> dict:
-    """Soubory z web_assets, které karta receptu potřebuje – i písma a obrázky, na které odkazují styly."""
+    """Files from web_assets the recipe card needs – also fonts and images the styles refer to."""
     page_url = _recipe_page_url(folder)
     amap = _asset_map()
     todo: list[str] = []
@@ -5324,7 +6365,7 @@ def _card_asset_entries(folder: Path) -> dict:
         except Exception:
             pass
     try:
-        img = recipe_extras(folder).get("image")            # obrázek pro PDF a mobil
+        img = recipe_extras(folder).get("image")            # image for the PDF and the phone
         if img:
             todo.append(img)
     except Exception:
@@ -5353,7 +6394,7 @@ def backup_file_name(titles: list[str]) -> str:
 
 
 def export_recipes_backup(folders: list, target: Path) -> dict:
-    """Zabalí vybrané recepty (celé složky: kroky, překlady, převody, karta, doplňky) do jednoho .7z."""
+    """Packs the selected recipes (whole folders: steps, translations, conversions, card, extras) into one .7z."""
     if py7zr is None:
         raise RuntimeError(tx("Chybí knihovna py7zr (py -m pip install py7zr)."))
     target = Path(target)
@@ -5392,7 +6433,7 @@ def export_recipes_backup(folders: list, target: Path) -> dict:
 
 
 def _backup_name_ok(name: str) -> bool:
-    """Do zálohy smí jen manifest, složky receptů a soubory karet – nic mimo ně (žádné ../, absolutní cesty)."""
+    """Only the manifest, recipe folders and card files may be in a backup – nothing outside them (no ../, absolute paths)."""
     parts = name.replace("\\", "/").split("/")
     if not name or name.startswith(("/", "\\")) or ":" in name or any(p in ("", ".", "..") for p in parts):
         return False
@@ -5407,7 +6448,7 @@ def _backup_name_ok(name: str) -> bool:
 
 
 def stage_recipe_backups(paths: list) -> dict:
-    """1. krok importu: rozbalí zálohy do dočasné složky, zkontroluje je a zjistí, které recepty už v kuchařce jsou."""
+    """Import step 1: unpacks backups into a temporary folder, checks them and finds which recipes are already in the cookbook."""
     if py7zr is None:
         raise RuntimeError(tx("Chybí knihovna py7zr (py -m pip install py7zr)."))
     tmp = Path(tempfile.mkdtemp(prefix="localchef_import_"))
@@ -5451,8 +6492,8 @@ def stage_recipe_backups(paths: list) -> dict:
 
 
 def apply_recipe_backups(stage: dict, overwrite: bool) -> dict:
-    """2. krok importu: zkopíruje recepty do kuchařky a doplní soubory karet. Přepisovaný recept jde do koše
-    (recipes_smazane), takže nic nezmizí natrvalo. Dočasnou složku nakonec smaže."""
+    """Import step 2: copies the recipes into the cookbook and adds the card files. An overwritten recipe goes to the trash
+    (recipes_smazane), so nothing disappears for good. Finally deletes the temporary folder."""
     res = {"imported": 0, "replaced": 0, "skipped": 0, "assets": 0, "errors": list(stage.get("errors", []))}
     try:
         for it in stage["items"]:
@@ -5471,12 +6512,12 @@ def apply_recipe_backups(stage: dict, overwrite: bool) -> dict:
                 if (RECIPES_DIR / src.name).exists():
                     move_recipe_to_trash(RECIPES_DIR / src.name)
             target = RECIPES_DIR / src.name
-            if target.exists():                       # nešlo přesunout do koše (otevřený soubor…)
+            if target.exists():                       # could not be moved to the trash (open file…)
                 res["errors"].append(f"{it['title']}: " + tx("složku receptu nejde nahradit"))
                 continue
             shutil.copytree(src, target)
             res["replaced" if it["exists"] else "imported"] += 1
-        # soubory karet: stejný název = stejný obsah, takže jen doplnit chybějící
+        # card files: same name = same content, so only add the missing ones
         added = {}
         for d in stage.get("asset_dirs", []):
             d = Path(d)
@@ -5515,9 +6556,92 @@ def apply_recipe_backups(stage: dict, overwrite: bool) -> dict:
 
 
 # ==========================================
-# VERZE, CO JE NOVÉHO, PODMÍNKY POUŽITÍ
+# VERSION, WHAT'S NEW, TERMS OF USE
 # ==========================================
 WHATS_NEW = {
+    "1.6": {
+        "cs": [
+            "📄 Nová karta receptu: každý recept – z Cookidoo, Monsieur Cuisine i z jiných webů – se ukazuje v jednotném "
+            "vzhledu aplikace, ne jako kopie stránky. Obrázek, autor, odkaz na zdroj, popis, porce a čas, suroviny, postup "
+            "s nastavením robota (přepínač Thermomix TM6 / Monsieur Cuisine), nutriční hodnoty a tipy. Míry se převedou na "
+            "metrické, dávka se přepočítá, karta sleduje světlý i tmavý vzhled. Platí to i pro všechny už uložené recepty – "
+            "nic se nepřevádí. Stejně vypadá recept v telefonu.",
+            "🎨 Každý web má v seznamu receptů vlastní barevnou ikonu a nový recept se nabídne do kategorie svého webu "
+            "(Cookidoo, Monsieur Cuisine, Prima FRESH, Allrecipes, BBC Good Food…).",
+            "🖨️ Export do PDF: menší obrázek, nutriční hodnoty bez zalamování (např. „35 g“ místo „35 grams protein“) a "
+            "menší okraje stránky – na jednu stránku se vejde víc.",
+            "🗂️ Nové výchozí kategorie: snídaně, svačiny, předkrmy, polévky, saláty, obědy, večeře, hlavní jídla, přílohy, "
+            "omáčky, pomazánky a dipy, pečivo, sladkosti a dezerty, nápoje, nealkoholické a alkoholické koktejly, zavařování.",
+            "🔄 Aktualizace z GitHubu: při startu aplikace zjistí, jestli je na GitHubu nová verze. Když ano, zeptá se, jestli ji "
+            "stáhnout a nainstalovat; aplikace se pak zavře, nová verze se nainstaluje a znovu spustí. Recepty a nastavení "
+            "zůstanou. Verzi jde přeskočit, ručně se dá zkontrolovat v ⚙️ Nastavení → 🔄 Zkontrolovat aktualizace. "
+            "Při spuštění z Pythonu aplikace nabídne stránku ke stažení.",
+            "🔎 Vícejazyčné hledání: hledaný výraz se přeloží do jazyka webu. Allrecipes a BBC Good Food dostanou "
+            "„zelňačku“ jako „sauerkraut soup“, české weby anglický výraz česky. Když web českou (nebo anglickou) verzi "
+            "nenajde, zkusí se výraz v druhém jazyce. Výrazy, u kterých jazyk nejde poznat "
+            "(„spaghetti“), se nejdřív hledají tak, jak jsou napsané, a přeložené až jako další pokus. U webu je vidět, pod "
+            "jakým výrazem se hledalo. Česká jídla zná vestavěný slovník, ostatní přeloží DeepL, Gemini nebo offline "
+            "překladač; překlady výrazů se pamatují.",
+            "🚫 Když web automatické hledání odmítne (ochrana proti robotům, chyba 403), aplikace to u něj napíše a hodinu "
+            "se ho znovu neptá – opakované dotazy by blokaci jen prodlužovaly. Hledání na webu jde pořád otevřít odkazem.",
+            "🇩🇪 Chefkoch byl z hledání vyřazen: odmítá vestavěný prohlížeč aplikace (chyba 403), takže na něm nešlo hledat "
+            "ani ukládat. Recepty z Chefkochu si můžeš dál prohlížet ve svém prohlížeči.",
+            "🖼️ Výsledky z BBC Good Food zase mají obrázky.",
+            "🎬 Prima FRESH: video recepty, které mají postup jen ve videu, se ve výsledcích hledání neukazují (ani články "
+            "z magazínu). Když takovou stránku otevřeš sám, aplikace ji neuloží – recept na ní v textu není.",
+            "📌 Panel s hledáním zůstává nahoře i při posouvání výsledků, není potřeba se vracet na začátek stránky.",
+            "📥 Offline překladač se při startu stáhne sám, když chybí, a okno ukazuje průběh v procentech. Okno jde skrýt "
+            "(stahuje se dál na pozadí) nebo stahování zrušit; „Příště nestahovat automaticky“ ho vypne.",
+            "💾 Ukládání receptu ukazuje průběh v adresním řádku a druhé kliknutí ho už nespustí podruhé. Recept "
+            "otevřený z hledání se zobrazí správně, i když ho v seznamu skrývá filtr.",
+            "🛠️ Spolehlivější práce na pozadí: stahování, překlady, hledání i ukládání receptu mají jasně řízený průběh "
+            "(zapisuje se do app.log), takže se nic nespustí dvakrát a zrušení funguje spolehlivě.",
+            "🌐 Jazyk receptu se pozná z jeho textu: český recept se do češtiny nepřekládá (jen se zobrazí, i bez překladače "
+            "a bez klíčů) a anglický se nepřekládá do angličtiny. Chybný údaj o jazyku na stránce už nevadí.",
+        ],
+        "en": [
+            "📄 New recipe card: every recipe – from Cookidoo, Monsieur Cuisine or any other website – is shown in the app's "
+            "own design, not as a copy of the page. Image, author, a link to the source, description, servings and time, "
+            "ingredients, method with machine settings (Thermomix TM6 / Monsieur Cuisine switch), nutrition and tips. Units "
+            "are converted to metric, the batch is rescaled, the card follows the light and dark look. This works for all "
+            "recipes saved before too – nothing is converted. Recipes look the same on the phone.",
+            "🎨 Every website has its own coloured icon in the recipe list, and a new recipe is offered into its website's "
+            "category (Cookidoo, Monsieur Cuisine, Prima FRESH, Allrecipes, BBC Good Food…).",
+            "🖨️ Export to PDF: a smaller image, nutrition values without wrapping (e.g. “35 g” instead of “35 grams protein”) "
+            "and smaller page margins – more fits on one page.",
+            "🗂️ New default categories: breakfast, snacks, starters, soups, salads, lunches, dinners, main dishes, side dishes, "
+            "sauces, spreads and dips, bread and pastry, sweets and desserts, drinks, non-alcoholic cocktails, cocktails, preserving.",
+            "🔄 Updates from GitHub: at start the app checks whether a new version is on GitHub. If so, it asks whether to "
+            "download and install it; the app then closes, the new version is installed and starts again. Recipes and settings "
+            "stay. You can skip a version, and check by hand in ⚙️ Settings → 🔄 Check for updates. When running from Python "
+            "the app offers the download page.",
+            "🔎 Multilingual search: the search term is translated into the website's language. Allrecipes and BBC Good Food "
+            "get “zelňačka” as “sauerkraut soup”, Czech sites get an English term in Czech. When a website finds no Czech "
+            "(or English) version, the term is tried in the other language. Terms whose language "
+            "cannot be told (“spaghetti”) are searched as typed first and translated only as the next attempt. Each website "
+            "shows the term it was searched with. Czech dishes come from a built-in dictionary, the rest is translated by "
+            "DeepL, Gemini or the offline translator; translated terms are remembered.",
+            "🚫 When a website refuses automatic search (bot protection, error 403), the app says so there and does not ask "
+            "it again for an hour – repeated requests would only make the block longer. The search on the website can still "
+            "be opened by its link.",
+            "🇩🇪 Chefkoch has been removed from search: it refuses the app's built-in browser (error 403), so neither searching "
+            "nor saving worked there. You can still browse Chefkoch recipes in your own browser.",
+            "🖼️ Results from BBC Good Food have pictures again.",
+            "🎬 Prima FRESH: video recipes whose method is only in the video are left out of the search results (and so are "
+            "magazine articles). If you open such a page yourself, the app does not save it – there is no recipe in the text.",
+            "📌 The search bar stays at the top while you scroll through results, no need to go back up.",
+            "📥 The offline translator downloads itself at start when it is missing, and a window shows the progress in "
+            "percent. You can hide the window (the download continues in the background) or cancel it; “Don’t download "
+            "automatically next time” turns it off.",
+            "💾 Saving a recipe shows its progress in the address bar and a second click no longer starts it twice. A "
+            "recipe opened from search is shown correctly even when a filter hides it in the list.",
+            "🛠️ More reliable background work: downloads, translations, search and saving a recipe follow a clearly "
+            "controlled course (written to app.log), so nothing starts twice and cancelling works reliably.",
+            "🌐 A recipe's language is recognised from its text: a Czech recipe is not translated into Czech (it is just shown, "
+            "even without a translator or keys) and an English one is not translated into English. A wrong language tag on "
+            "the page no longer matters.",
+        ],
+    },
     "1.5": {
         "cs": [
             "💛 Nové tlačítko Podpořit vývoj: pokud se vám aplikace líbí, můžete autora podpořit přes Ko-fi, PayPal nebo "
@@ -5682,7 +6806,7 @@ DISCLAIMER_TEXT = {
 }
 
 
-# Vestavěný návod (❓ Návod). Kapitoly = (nadpis, HTML). Odkazy se otevřou v prohlížeči počítače.
+# Built-in guide (❓ How to use). Chapters = (heading, HTML). Links open in the computer's browser.
 GEMINI_KEY_URL = "https://aistudio.google.com/app/apikey"
 DEEPL_KEY_URL = "https://www.deepl.com/pro-api"
 HOW_TO_GUIDE = {
@@ -5700,7 +6824,9 @@ HOW_TO_GUIDE = {
         ("Horní lišta",
          "<ul><li><b>◀ Zpět</b> – předchozí stránka ve vestavěném prohlížeči.</li>"
          "<li><b>🏠 Domů</b> – úvodní stránka s hledáním v tvé kuchařce i na webech (Cookidoo, Monsieur Cuisine, Prima FRESH, "
-         "Chefkoch, Allrecipes, BBC Good Food). Hledat jde podle názvu nebo podle suroviny.</li>"
+         "Allrecipes, BBC Good Food). Hledat jde podle názvu nebo podle suroviny. Na zahraničních webech se "
+         "hledaný výraz přeloží do jejich jazyka (u webu je vidět „hledáno jako …“), panel s hledáním zůstává při "
+         "posouvání nahoře.</li>"
          "<li><b>🟢 Cookidoo.cz</b> a <b>🔵 Monsieur-Cuisine</b> – otevřou web daného robota.</li>"
          "<li><b>⬇️ ULOŽIT RECEPT</b> – uloží právě otevřený recept.</li>"
          "<li><b>❓ Návod</b> – tenhle návod. <b>⚙️ Nastavení</b> – překladače, klíče, jazyk a vzhled (viz níže).</li></ul>"),
@@ -5709,7 +6835,7 @@ HOW_TO_GUIDE = {
          "(🟢 Cookidoo.cz), přihlášení vydrží i po restartu.</li>"
          "<li><b>Monsieur Cuisine</b> recepty jsou veřejné, ukládají se bez účtu.</li>"
          "<li><b>Ostatní weby</b> – najdi recept přes 🏠 Domů a ulož ho stejně. Aplikace z něj vezme jen recept: suroviny, "
-         "postup a tipy, karta receptu je očištěná od reklam a souvisejících článků (autor receptu zůstává). Stránky jen "
+         "postup a tipy, autor, obrázek a odkaz na zdroj. Recept se nabídne do kategorie svého webu. Stránky jen "
          "s videem uložit nejde.</li>"
          "<li>Uložení stejného receptu znovu ho přepíše a smaže jeho staré převody a překlady – hodí se, když se něco "
          "uložilo špatně.</li></ul>"),
@@ -5723,7 +6849,9 @@ HOW_TO_GUIDE = {
          "<li>Víc receptů označíš <b>Ctrl + klik</b> (jednotlivě) nebo <b>Shift + klik</b> (rozsah); kliknutím na kategorii "
          "označíš všechny její recepty.</li></ul>"),
         ("Recept a režim vaření",
-         "<ul><li><b>📄 Karta receptu</b> – uložená stránka receptu, funguje bez internetu.</li>"
+         "<ul><li><b>📄 Karta receptu</b> – recept v jednotném vzhledu aplikace (obrázek, autor, odkaz na zdroj, suroviny, "
+         "postup s nastavením robota, nutriční hodnoty, tipy), funguje bez internetu. Přepínač v kartě ukáže kroky pro "
+         "Thermomix TM6 nebo Monsieur Cuisine.</li>"
          "<li><b>🍲 Režim Thermomix (TM6)</b> a <b>🤖 Monsieur Cuisine Smart (MCS)</b> – kroky s časem, teplotou a "
          "rychlostí. Recept z jednoho robota se pro druhý převede sám (s klíčem Gemini přes umělou inteligenci, jinak "
          "offline pravidly). Recepty z ostatních webů převede offline asistent: kroky, které jdou dělat v robotu, dostanou "
@@ -5737,12 +6865,16 @@ HOW_TO_GUIDE = {
          "<p>Aplikace zkouší překladače v pořadí <b>DeepL → Gemini → offline překladač</b>. Když jeden nemá klíč, "
          "vyčerpá limit nebo nefunguje internet, použije další. Hotový překlad se uloží k receptu, takže se překládá jen jednou.</p>"
          "<p><b>Offline překladač</b> (Argos Translate) funguje bez internetu a bez klíčů:</p>"
-         "<ol><li>V sestavené aplikaci (exe) už je. Při spuštění z Pythonu ho nainstaluj: <code>py -m pip install argostranslate</code>.</li>"
-         "<li>Jednou otevři <b>⚙️ → 📥 Stáhnout offline překladač</b> a nech stáhnout jazykové modely (čeština, angličtina, němčina). "
-         "Na to je potřeba internet, každý model má desítky až stovky MB.</li>"
+         "<ol><li>Když chybí, aplikace ho při startu stáhne sama (při spuštění z Pythonu i knihovnu argostranslate) a "
+         "v okně ukazuje průběh v procentech. Okno jde <b>Skrýt</b> – stahuje se dál na pozadí – nebo stahování "
+         "<b>Zrušit</b>. Zaškrtnutím <b>Příště nestahovat automaticky</b> se to vypne; ručně ho pak stáhneš v "
+         "<b>⚙️ → 📥 Stáhnout offline překladač</b>. Potřebuje internet, každý jazykový model má desítky až stovky MB.</li>"
          "<li>Potom překládá i úplně offline. Běží v samostatném procesu, takže první překlad po startu chvíli trvá "
          "(načítá modely). Kvalita je slabší než u DeepL a Gemini, ale pro recepty stačí.</li></ol>"
-         "<p><b>⚙️ → 🌍 Přeložit všechny recepty</b> přeloží celou kuchařku na pozadí.</p>"),
+         "<p><b>⚙️ → 🌍 Přeložit všechny recepty</b> přeloží celou kuchařku na pozadí – aplikaci můžeš mezitím normálně "
+         "používat, průběh je v modré liště nahoře.</p>"
+         "<p>Jazyk receptu se pozná z jeho textu. Recept, který už v cílovém jazyce je (český recept → 🇨🇿 Čeština), se "
+         "nepřekládá, jen se zobrazí – i bez překladače a bez klíčů.</p>"),
         ("Proč zadat API klíče a jak je získat (zdarma)",
          "<p>Klíče nejsou povinné – aplikace funguje i bez nich. S nimi je ale výrazně lepší:</p>"
          "<ul><li><b>Gemini</b> (Google AI) dělá nejlepší <b>převody mezi TM6 a Monsieur Cuisine</b> a převody receptů "
@@ -5768,7 +6900,7 @@ HOW_TO_GUIDE = {
         ("⚙️ Nastavení",
          "<ul><li><b>Překlad</b>: přeložit všechny recepty, ✨ Gemini AI klíč, 📥 Stáhnout offline překladač (stav a stažení), "
          "🔑 DeepL klíč.</li><li><b>Vzhled</b>: jazyk aplikace (čeština/angličtina), tmavý/světlý režim, styl ikon "
-         "receptů (🟢/🔵 nebo 🍲/🤖).</li><li><b>Aplikace</b>: co je nového a podmínky použití.</li></ul>"),
+         "receptů (🟢/🔵 nebo 🍲/🤖).</li><li><b>Aplikace</b>: co je nového a podmínky použití, 🔄 Zkontrolovat aktualizace (nová verze z GitHubu; aplikace se ptá i sama při startu).</li></ul>"),
         ("Data a záloha",
          "<p>Vše je ve složce <code>localchef_data</code> vedle programu: <code>catalog.db</code> (seznam), "
          "<code>recipes/</code> (recepty, každý ve vlastní složce), <code>recipes_smazane/</code> (koš), "
@@ -5820,7 +6952,8 @@ HOW_TO_GUIDE = {
         ("Top bar",
          "<ul><li><b>◀ Back</b> – previous page in the built-in browser.</li>"
          "<li><b>🏠 Home</b> – start page that searches your cookbook and websites (Cookidoo, Monsieur Cuisine, Prima FRESH, "
-         "Chefkoch, Allrecipes, BBC Good Food) by name or by ingredient.</li>"
+         "Allrecipes, BBC Good Food) by name or by ingredient. On foreign sites the search term is translated "
+         "into their language (each site shows “searched as …”); the search bar stays at the top while scrolling.</li>"
          "<li><b>🟢 Cookidoo.cz</b> and <b>🔵 Monsieur-Cuisine</b> – open the machine's website.</li>"
          "<li><b>⬇️ SAVE RECIPE</b> – saves the recipe that is open.</li>"
          "<li><b>❓ How to use</b> – this guide. <b>⚙️ Settings</b> – translators, keys, language and appearance (see below).</li></ul>"),
@@ -5829,7 +6962,7 @@ HOW_TO_GUIDE = {
          "(🟢 Cookidoo.cz); the login survives restarts.</li>"
          "<li><b>Monsieur Cuisine</b> recipes are public and save without an account.</li>"
          "<li><b>Other sites</b> – find a recipe via 🏠 Home and save it the same way. Only the recipe is kept: ingredients, "
-         "method and tips; the recipe card is cleaned of ads and related articles (the recipe's author stays). Video-only "
+         "method and tips, author, image and a link to the source. The recipe is offered into its website's category. Video-only "
          "pages cannot be saved.</li>"
          "<li>Saving the same recipe again replaces it and removes its old conversions and translations – useful when "
          "something was saved wrong.</li></ul>"),
@@ -5843,7 +6976,9 @@ HOW_TO_GUIDE = {
          "<li>Select several recipes with <b>Ctrl + click</b> (one by one) or <b>Shift + click</b> (a range); clicking a category "
          "selects all its recipes.</li></ul>"),
         ("Recipe and cooking mode",
-         "<ul><li><b>📄 Recipe card</b> – the saved recipe page, works offline.</li>"
+         "<ul><li><b>📄 Recipe card</b> – the recipe in the app's own design (image, author, a link to the source, ingredients, "
+         "method with machine settings, nutrition, tips), works offline. A switch on the card shows the steps for Thermomix "
+         "TM6 or Monsieur Cuisine.</li>"
          "<li><b>🍲 Thermomix mode (TM6)</b> and <b>🤖 Monsieur Cuisine Smart (MCS)</b> – steps with time, temperature and "
          "speed. A recipe for one machine is converted for the other automatically (with a Gemini key by AI, otherwise by "
          "offline rules). Recipes from other sites are converted by the offline assistant: steps that can be done in the "
@@ -5858,13 +6993,17 @@ HOW_TO_GUIDE = {
          "out of quota or there is no internet, it uses the next one. A finished translation is stored with the recipe, so "
          "each recipe is translated only once.</p>"
          "<p>The <b>offline translator</b> (Argos Translate) works without internet and without keys:</p>"
-         "<ol><li>The built app (exe) already includes it. When running from Python, install it: "
-         "<code>py -m pip install argostranslate</code>.</li>"
-         "<li>Open <b>⚙️ → 📥 Download offline translator</b> once and let it download the language models (Czech, English, German). "
-         "This needs internet; each model is tens to hundreds of MB.</li>"
+         "<ol><li>When it is missing, the app downloads it at start by itself (from Python also the argostranslate library) "
+         "and a window shows the progress in percent. <b>Hide</b> closes the window while the download continues in the "
+         "background, <b>Cancel</b> stops it. Ticking <b>Don’t download automatically next time</b> turns this off; you can then "
+         "download it in <b>⚙️ → 📥 Download offline translator</b>. It needs internet; each language model is tens to "
+         "hundreds of MB.</li>"
          "<li>After that it translates fully offline. It runs in a separate process, so the first translation after start "
          "takes a moment (loading models). Quality is below DeepL and Gemini but fine for recipes.</li></ol>"
-         "<p><b>⚙️ → 🌍 Translate all recipes</b> translates the whole cookbook in the background.</p>"),
+         "<p><b>⚙️ → 🌍 Translate all recipes</b> translates the whole cookbook in the background – you can keep using the "
+         "app meanwhile, the progress is in the blue bar at the top.</p>"
+         "<p>A recipe's language is recognised from its text. A recipe that is already in the target language (an English "
+         "recipe → 🇬🇧 English) is not translated, just shown – even without a translator or keys.</p>"),
         ("Why add API keys and how to get them (free)",
          "<p>Keys are optional – the app works without them. With them it is much better:</p>"
          "<ul><li><b>Gemini</b> (Google AI) gives the best <b>conversions between TM6 and Monsieur Cuisine</b> and from "
@@ -5890,7 +7029,7 @@ HOW_TO_GUIDE = {
         ("⚙️ Settings",
          "<ul><li><b>Translation</b>: translate all recipes, ✨ Gemini AI key, 📥 Download offline translator (status and "
          "download), 🔑 DeepL key.</li><li><b>Appearance</b>: app language (Czech/English), dark/light mode, recipe icon "
-         "style (🟢/🔵 or 🍲/🤖).</li><li><b>App</b>: what's new and terms of use.</li></ul>"),
+         "style (🟢/🔵 or 🍲/🤖).</li><li><b>App</b>: what's new and terms of use, 🔄 Check for updates (a new version from GitHub; the app also asks by itself at start).</li></ul>"),
         ("Data and backup",
          "<p>Everything is in the <code>localchef_data</code> folder next to the program: <code>catalog.db</code> (the "
          "list), <code>recipes/</code> (one folder per recipe), <code>recipes_smazane/</code> (trash), <code>config.json</code> "
@@ -5941,7 +7080,7 @@ def how_to_html(lang: str) -> str:
 
 
 class HowToDialog(QDialog):
-    """❓ Návod k použití – CZ/EN, odkazy na registraci klíčů se otevřou v prohlížeči počítače."""
+    """❓ How to use – CZ/EN, links to key registration open in the computer's browser."""
 
     def __init__(self, lang: str, parent=None):
         super().__init__(parent)
@@ -5995,7 +7134,7 @@ def whats_new_html(lang: str) -> str:
 
 
 class WhatsNewDialog(QDialog):
-    """Novinky a podmínky použití. OK (i zavření okna) jde až po sjetí na konec textu, aby si lidi upozornění přečetli."""
+    """What's new and terms of use. OK (and closing the window) only works after scrolling to the end, so people read the notice."""
 
     def __init__(self, lang: str, show_checkbox: bool = True, parent=None):
         super().__init__(parent)
@@ -6046,7 +7185,7 @@ class WhatsNewDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # až teď je text rozložený a posuvník má skutečný rozsah
+        # only now is the text laid out and the scroll bar has its real range
         QTimer.singleShot(300, self._after_shown)
 
     def _after_shown(self):
@@ -6080,13 +7219,13 @@ class WhatsNewDialog(QDialog):
             event.ignore()
 
 
-# 💛 Donation – dobrovolná podpora autora. Odkazy se otevřou v prohlížeči počítače.
+# 💛 Donation – voluntary support for the author. Links open in the computer's browser.
 DONATE_LINKS = (
     ("☕ Ko-fi", "https://ko-fi.com/johnpreclik"),
     ("🅿️ PayPal", "https://paypal.me/johnpreclik"),
     ("💳 Revolut", "https://revolut.me/preca"),
 )
-# QR kód pro https://revolut.me/preca (PNG, vygenerováno knihovnou segno) – vložený, aby šel ukázat i offline
+# QR code for https://revolut.me/preca (PNG, generated by the segno library) – embedded so it shows offline too
 DONATE_REVOLUT_QR_PNG = "iVBORw0KGgoAAAANSUhEUgAAAK4AAACuAQAAAACHdwtDAAAA9klEQVR42u2X0QkDMQxDTTNARsrqGSkDBFTZSlso91tUaMNx5PwlnCfFF7haO367vIKrrcFNA/Ijxr7F5fpkmUoGFTVMCqAeimHFpUQaos/d0Vb2x6kEE/gWJTvfZiUoASLWysnxjh6nd86aJWMcc5tOJ2OkI2XwXBJa2+nwEa6ppye6Vk6CGtgWvm09YZI82pKbDBYfJ2WZA4nRxZlpoqUs3GHkJHGtaI3siZGTsm2Ik6GKzTt0jSyjgO1wZmzlm9piv3eePsIyz2zACXxjnoSiPtycvGY2VN6ml61zbChMZGcrJ9DkphHFfBcfXKfv3vn/jb6V7wt4N+IecV1aAAAAAElFTkSuQmCC"
 DONATE_TEXT = {
     "cs": ("Líbí se vám LocalChef Studio?",
@@ -6101,7 +7240,7 @@ DONATE_TEXT = {
 
 
 def donate_banner_html(lang: str) -> str:
-    """Krátká výzva k podpoře – hlavička okna novinek a podmínek."""
+    """Short call for support – header of the what's new and terms window."""
     head, body, _ = DONATE_TEXT["en" if lang == "en" else "cs"]
     links = " · ".join(f"<a style='color:#FFD54F;' href='{url}'>{html_mod.escape(name)}</a>" for name, url in DONATE_LINKS)
     return ("<table width='100%' cellpadding='8' style='background-color:#3E2723; border:1px solid #FFB300; margin-bottom:8px;'>"
@@ -6109,8 +7248,169 @@ def donate_banner_html(lang: str) -> str:
             f"<b>{links}</b></td></tr></table>")
 
 
+class OfflineDownloadDialog(QDialog):
+    """Window for downloading the offline translator: percent, what is being downloaded, Hide (the download continues)
+    and Cancel. The download thread fills the state through progress(); the window reads it with a timer (Qt must not
+    be called from a thread)."""
+
+    def __init__(self, job: "Job", parent=None, auto: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME} – " + tx("Offline překladač"))
+        self.setModal(False)
+        self.resize(520, 210)
+        self.job = job                                 # state and progress live in the job, the window only shows them
+        lay = QVBoxLayout(self)
+        self.lbl_head = QLabel(tx("📥 Stahuje se offline překladač…"))
+        self.lbl_head.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.lbl_head.setWordWrap(True)
+        lay.addWidget(self.lbl_head)
+        self.lbl_info = QLabel(tx("Překlad receptů pak funguje i bez internetu a bez API klíčů. Aplikaci můžeš mezitím dál používat."))
+        self.lbl_info.setWordWrap(True)
+        lay.addWidget(self.lbl_info)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        lay.addWidget(self.bar)
+        self.lbl_detail = QLabel(tx("Připravuji stahování…"))
+        self.lbl_detail.setStyleSheet("color: #9E9E9E;")
+        lay.addWidget(self.lbl_detail)
+        self.chk_never = QCheckBox(tx("Příště nestahovat automaticky"))
+        self.chk_never.setVisible(auto)
+        lay.addWidget(self.chk_never)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_cancel = QPushButton(tx("Zrušit"))
+        self.btn_cancel.clicked.connect(self._cancel)
+        self.btn_hide = QPushButton(tx("Skrýt"))
+        self.btn_hide.setToolTip(tx("Okno se zavře a stahování poběží dál na pozadí."))
+        self.btn_hide.clicked.connect(self.hide)
+        row.addWidget(self.btn_cancel)
+        row.addWidget(self.btn_hide)
+        lay.addLayout(row)
+        self.timer = QTimer(self)
+        self.timer.setInterval(300)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start()
+
+    def progress(self, data):
+        """Called by the download thread. Returns False when the user cancelled the download."""
+        if isinstance(data, dict):
+            self.job.progress(**data, **({"phase": "models"} if "i" in data else {}))
+        return not self.job.cancel_requested
+
+    @staticmethod
+    def percent(st: dict) -> int:
+        """Overall percent from the state {i, n, done, total} (model i of n, done/total bytes of the current model)."""
+        n = st.get("n") or 0
+        if not n:
+            return 0
+        frac = (st.get("done", 0) / st["total"]) if st.get("total") else 0.0
+        return max(0, min(100, int(100 * (min(st.get("i", 0), n) + min(frac, 1.0)) / n)))
+
+    def refresh(self):
+        if not self.job.running:
+            return
+        st = self.job.data
+        if st.get("phase") == "pip":
+            self.bar.setRange(0, 0)                    # pip reports no progress → only “running”
+            self.lbl_detail.setText(tx("Instaluji knihovnu argostranslate (pip)… {s} s", s=int(time.time() - st["started"])))
+        elif st.get("phase") == "models":
+            self.bar.setRange(0, 100)
+            pct = self.percent(st)
+            self.bar.setValue(pct)
+            self.lbl_head.setText(tx("📥 Stahuje se offline překladač… {p} %", p=pct))
+            if st.get("i", 0) < st.get("n", 0):
+                mb = f"{st.get('done', 0) / 1048576:.0f} / {st['total'] / 1048576:.0f} MB" if st.get("total") else \
+                    f"{st.get('done', 0) / 1048576:.0f} MB"
+                self.lbl_detail.setText(tx("Jazykový model {pair} ({k}/{n}) · {mb}", pair=st.get("pair", ""),
+                                           k=st.get("i", 0) + 1, n=st.get("n", 0), mb=mb))
+            else:
+                self.lbl_detail.setText(tx("Instaluji jazykové modely…"))
+        else:
+            self.lbl_detail.setText(tx("Zjišťuji, co je potřeba stáhnout… {s} s", s=int(time.time() - st["started"])))
+
+    def _cancel(self):
+        if self.job.cancel():
+            self.btn_cancel.setEnabled(False)
+            self.lbl_detail.setText(tx("Ruším stahování…"))
+
+    def finish(self, box: dict):
+        """Done / error / cancelled (the job is already finished): the window shows it and stays until closed."""
+        self.timer.stop()
+        self.bar.setRange(0, 100)
+        self.btn_cancel.setVisible(False)
+        self.btn_hide.setText(tx("Zavřít"))
+        self.btn_hide.setToolTip("")
+        if "error" not in box:
+            self.bar.setValue(100)
+            have = ", ".join(f"{a}→{b}" for a, b in box.get("result", {}).get("pairs", []))
+            self.lbl_head.setText(tx("✅ Offline překladač je připravený."))
+            self.lbl_detail.setText(tx("Stažené modely: {have}", have=have))
+        elif self.job.is_in("cancelled"):
+            self.lbl_head.setText(tx("Stahování bylo zrušeno."))
+            self.lbl_detail.setText(tx("Překladač je vždy možné stáhnout v ⚙️ Nastavení → 📥 Stáhnout offline překladač."))
+        else:
+            self.lbl_head.setText(tx("❌ Stažení se nepodařilo."))
+            self.lbl_detail.setText(str(box["error"])[:400])
+            self.lbl_detail.setWordWrap(True)
+        self.show()
+        self.raise_()
+
+
+class UpdateDownloadDialog(QDialog):
+    """Downloading a new version: progress in percent and Cancel. State and progress live in the job (update_job)."""
+
+    def __init__(self, job: "Job", rel: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME} – " + tx("Aktualizace"))
+        self.setModal(False)
+        self.resize(480, 150)
+        self.job = job
+        lay = QVBoxLayout(self)
+        self.lbl_head = QLabel(tx("⬇️ Stahuji LocalChef Studio {v}…", v=rel["version"]))
+        self.lbl_head.setStyleSheet("font-size: 16px; font-weight: bold;")
+        lay.addWidget(self.lbl_head)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        lay.addWidget(self.bar)
+        self.lbl_detail = QLabel("")
+        self.lbl_detail.setWordWrap(True)
+        lay.addWidget(self.lbl_detail)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.btn_cancel = QPushButton(tx("Zrušit"))
+        self.btn_cancel.clicked.connect(self._cancel)
+        row.addWidget(self.btn_cancel)
+        lay.addLayout(row)
+        self.timer = QTimer(self)
+        self.timer.setInterval(250)
+        self.timer.timeout.connect(self.refresh)
+        self.timer.start()
+
+    def progress(self, done: int, total: int):
+        self.job.progress(done=done, total=total)
+        return not self.job.cancel_requested
+
+    def refresh(self):
+        done, total = self.job.data.get("done", 0), self.job.data.get("total", 0)
+        self.bar.setValue(int(100 * done / total) if total else 0)
+        self.lbl_detail.setText(f"{done / 1048576:.0f} / {total / 1048576:.0f} MB" if total else f"{done / 1048576:.0f} MB")
+
+    def _cancel(self):
+        if self.job.cancel():
+            self.btn_cancel.setEnabled(False)
+
+    def fail(self, err: str):
+        self.timer.stop()
+        self.lbl_head.setText(tx("Stahování bylo zrušeno.") if self.job.is_in("cancelled") else tx("❌ Stažení se nepodařilo."))
+        self.lbl_detail.setText(err[:400])
+        self.btn_cancel.setText(tx("Zavřít"))
+        self.btn_cancel.setEnabled(True)
+        self.btn_cancel.clicked.connect(self.close)
+
+
 class DonateDialog(QDialog):
-    """💛 Donation: proč podpořit, odkazy Ko-fi / PayPal / Revolut a QR kód pro Revolut. CZ/EN."""
+    """💛 Donation: why to support, Ko-fi / PayPal / Revolut links and a QR code for Revolut. CZ/EN."""
 
     def __init__(self, lang: str, parent=None):
         super().__init__(parent)
@@ -6260,7 +7560,62 @@ WIDGET_TOOLTIPS = {
 }
 
 
+class RecipeView:
+    """Everything about the recipe shown on the right: which recipe, its language, machine, step, units, batch and
+    the loaded data. select() is the only way to switch to another recipe and resets what belongs to one recipe
+    (language, step, data); machine, detailed steps, units and batch are preferences and stay.
+    Invalid values (a typo like lang="de") are logged and ignored instead of breaking the view."""
+    LANGS = ("orig", "en", "cs")
+    DEVICES = ("tm6", "mcs")
+    FIELDS = ("folder", "recipe_id", "platform", "lang", "device", "step", "fine", "metric", "scale", "data")
+
+    def __init__(self):
+        self.folder: Path | None = None
+        self.recipe_id = None
+        self.platform = "tm6"
+        self.lang = "orig"
+        self.device = "tm6"
+        self.step = 0
+        self.fine = True
+        self.metric = True
+        self.scale = 1.0
+        self.data: dict | None = None
+
+    def __setattr__(self, name, value):
+        if (name == "lang" and value not in self.LANGS) or (name == "device" and value not in self.DEVICES):
+            log(f"[stav] zobrazení receptu: neplatná hodnota {name}={value!r} (ignoruji)")
+            return
+        object.__setattr__(self, name, value)
+
+    def select(self, folder, recipe_id, platform: str = "tm6"):
+        """Switch to another recipe: original language, first step, data loaded again by the caller."""
+        self.folder, self.recipe_id, self.platform = folder, recipe_id, (platform or "tm6").lower()
+        self.lang, self.step, self.data = "orig", 0, None
+        log(f"[stav] zobrazení receptu: {recipe_id} ({self.platform})")
+
+    def snapshot(self) -> dict:
+        return {k: (str(v) if k == "folder" and v else v) for k, v in vars(self).items() if k != "data"} | \
+            {"data_title": (self.data or {}).get("title", "")}
+
+
+def _view_attr(field: str):
+    """Old attribute names of the window (self.display_lang…) read and write the RecipeView."""
+    return property(lambda self: getattr(self.view, field), lambda self, v: setattr(self.view, field, v))
+
+
 class LocalChefStudio(QMainWindow):
+    # the recipe view lives in self.view (RecipeView); these names stay for the existing code
+    current_recipe_folder = _view_attr("folder")
+    current_recipe_id = _view_attr("recipe_id")
+    current_source_platform = _view_attr("platform")
+    display_lang = _view_attr("lang")
+    device_mode = _view_attr("device")
+    current_step_index = _view_attr("step")
+    fine_mode = _view_attr("fine")
+    use_metric_conversion = _view_attr("metric")
+    portion_scale = _view_attr("scale")
+    current_offline_data = _view_attr("data")
+
     def __init__(self):
         super().__init__()
         self.ui_lang = "en" if load_config().get("ui_lang") == "en" else "cs"
@@ -6268,24 +7623,15 @@ class LocalChefStudio(QMainWindow):
         self.icon_style = load_icon_style()
         self.setWindowTitle(UI_TEXTS[self.ui_lang]["window_title"])
         self.resize(1680, 960)
-        for note in _DATA_NOTES:            # přejmenování datové složky (do 1.2 cookidoo_data) – až teď jde do app.log
+        for note in _DATA_NOTES:            # renaming of the data folder (until 1.2 cookidoo_data) – only now does it go to app.log
             log(note)
         init_db()
-        sync_catalog_from_folders()        # recepty zkopírované do localchef_data/recipes se samy objeví v kuchařce
-        repair_fragmented_steps()          # recepty uložené s rozsekanými kroky → opravit z dat Cookidoo
-        backfill_translated_titles()       # názvy z hotových překladů → seznam receptů
+        sync_catalog_from_folders()        # recipes copied into localchef_data/recipes show up in the cookbook by themselves
+        repair_fragmented_steps()          # recipes saved with split steps → repair from the Cookidoo data
+        backfill_translated_titles()       # titles from finished translations → recipe list
         start_lan_http_server()
 
-        self.current_offline_data = None
-        self.current_recipe_folder: Path | None = None
-        self.current_recipe_id = None
-        self.current_source_platform = "tm6"
-        self.current_step_index = 0
-        self.use_metric_conversion = True
-        self.portion_scale = 1.0
-        self.display_lang = "orig"
-        self.device_mode = "tm6"
-        self.fine_mode = True
+        self.view = RecipeView()
         self.is_dark_mode = True
         self.translation_worker: TranslationWorker | None = None
         self.conv_worker: DeviceConversionWorker | None = None
@@ -6438,7 +7784,7 @@ class LocalChefStudio(QMainWindow):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
 
-        # ---- lišta 1: web (prohlížení a ukládání receptů) + nastavení
+        # ---- bar 1: web (browsing and saving recipes) + settings
         toolbar = QHBoxLayout()
         toolbar.setContentsMargins(8, 8, 8, 4)
         self.btn_back = QPushButton(self.t('back_btn'))
@@ -6455,7 +7801,7 @@ class LocalChefStudio(QMainWindow):
         self.btn_home = QPushButton(tx("🏠 Domů"))
         self.btn_home.setStyleSheet("background-color: #E65100; color: white; font-weight: bold; padding: 6px 12px;")
         self.btn_home.clicked.connect(self._go_home)
-        toolbar.insertWidget(1, self.btn_home)          # pořadí: ← Zpět, 🏠 Domů, Cookidoo, MCS
+        toolbar.insertWidget(1, self.btn_home)          # order: ← Back, 🏠 Home, Cookidoo, MCS
         self.url_bar = QLineEdit()
         self.url_bar.setReadOnly(True)
         toolbar.addWidget(self.url_bar, stretch=1)
@@ -6484,6 +7830,8 @@ class LocalChefStudio(QMainWindow):
         self.btn_offline_tr.setToolTip(tx("Stav offline překladače (Argos Translate) a stažení jazykových modelů pro překlad bez internetu a bez klíčů"))
         self.btn_offline_tr.triggered.connect(self._offline_translator_dialog)
         menu.addAction(self.btn_offline_tr)
+        self.btn_check_update = QAction(tx("🔄 Zkontrolovat aktualizace"), self)
+        self.btn_check_update.triggered.connect(lambda: self._check_update(manual=True))
         self.btn_deepl_key = QAction(self.t('key_btn'), self)
         self.btn_deepl_key.triggered.connect(self._prompt_api_key)
         menu.addAction(self.btn_deepl_key)
@@ -6512,6 +7860,7 @@ class LocalChefStudio(QMainWindow):
         self.btn_whats_new = QAction(tx("ℹ️ Co je nového a podmínky použití (verze {v})", v=APP_VERSION), self)
         self.btn_whats_new.triggered.connect(lambda *_: self._show_whats_new(False))
         menu.addAction(self.btn_whats_new)
+        menu.addAction(self.btn_check_update)
         self.btn_settings.setMenu(menu)
         self.settings_menu = menu
         menu.setToolTipsVisible(True)
@@ -6522,7 +7871,7 @@ class LocalChefStudio(QMainWindow):
         toolbar.addWidget(self.btn_settings)
         right_layout.addLayout(toolbar)
 
-        # ---- lišta 2: vybraný recept (zobrazení, jazyk, PDF)
+        # ---- bar 2: the selected recipe (view, language, PDF)
         self.recipe_bar = QFrame()
         self.recipe_bar.setStyleSheet("QFrame#recipeBar { background-color: #252526; border-top: 1px solid #333; border-bottom: 1px solid #333; }")
         self.recipe_bar.setObjectName("recipeBar")
@@ -6607,6 +7956,11 @@ class LocalChefStudio(QMainWindow):
         else:
             self.webview.setUrl(QUrl("https://cookidoo.cz/foundation/cs-CZ"))
         self._search_pages = {}
+        self.startup = StateMachine("start", self.STARTUP_FLOW, "idle")
+        self.offline_job = Job("stažení offline překladače")
+        self.save_flow = SaveFlow()
+        self.update_job = Job("stažení aktualizace")
+        self._offline_dlg = None   # What's new → translator → update
         self._search_timer = QTimer(self)
         self._search_timer.setInterval(400)
         self._search_timer.timeout.connect(self._process_search_queue)
@@ -6634,7 +7988,7 @@ class LocalChefStudio(QMainWindow):
             QMessageBox.information(self, tx("Uloženo"), tx("DeepL API klíč byl uložen."))
 
     def _run_bg(self, label: str, fn, on_done):
-        """Spustí pomalou práci ve vlákně; okno zůstává živé, výsledek přijde do on_done(box)."""
+        """Runs slow work in a thread; the window stays responsive, the result comes to on_done(box)."""
         box = {"done": False}
 
         def worker():
@@ -6672,7 +8026,7 @@ class LocalChefStudio(QMainWindow):
                 "Offline překladač (Argos Translate) není nainstalovaný.\n\nNainstalovat ho teď i s jazykovými modely? "
                 "Jednorázově se stáhnou knihovny a modely (zhruba 1–2 GB), potřebuje to internet a pár minut."))
             if ans == QMessageBox.StandardButton.Yes:
-                self._run_bg(tx("📥 Stahuji offline překladač…"), install_offline_translator, self._on_argos_installed)
+                self._start_offline_download()
             return
         self._run_bg(tx("🌍 Zjišťuji stav offline překladače…"), lambda: argos_call({"action": "status"}, 600), self._on_argos_status)
 
@@ -6696,58 +8050,165 @@ class LocalChefStudio(QMainWindow):
             msg + tx("\n\nChybí: {missing}\n\nStáhnout je teď? (jednorázově, potřebuje internet, každý model má desítky až stovky MB)",
                      missing=", ".join(f"{a}→{b}" for a, b in missing)))
         if ans == QMessageBox.StandardButton.Yes:
-            self._run_bg(tx("📥 Stahuji jazykové modely…"),
-                         lambda: argos_call({"action": "install", "pairs": [list(x) for x in missing]}, 3600),
-                         self._on_argos_installed)
+            self._start_offline_download()
 
-    def _ask_offline_download(self, text: str) -> tuple:
-        """ANO / NE + „Příště se již neptat“ + kde jde překladač stáhnout později. Vrací (ano, už se neptat)."""
-        box = QMessageBox(self)
-        box.setIcon(QMessageBox.Icon.Question)
-        box.setWindowTitle(tx("Offline překladač"))
-        box.setText(text)
-        box.setInformativeText(tx("Překladač je vždy možné stáhnout v ⚙️ Nastavení → 📥 Stáhnout offline překladač."))
-        b_yes = box.addButton(tx("ANO"), QMessageBox.ButtonRole.YesRole)
-        box.addButton(tx("NE"), QMessageBox.ButtonRole.NoRole)
-        chk = QCheckBox(tx("Příště se již neptat"))
-        box.setCheckBox(chk)
-        box.setDefaultButton(b_yes)
-        box.exec()
-        return box.clickedButton() is b_yes, chk.isChecked()
+    def _start_offline_download(self, auto: bool = False, then=None):
+        """Downloads the offline translator (library and missing models) with a progress window. auto = started by itself at start."""
+        if self.offline_job.running:
+            self._offline_dlg.show()                   # already downloading → just show the window
+            self._offline_dlg.raise_()
+            return
+        self.offline_job.start(phase="start", auto=auto)
+        dlg = self._offline_dlg = OfflineDownloadDialog(self.offline_job, self, auto)
 
-    def _startup_offline_check(self):
-        """Při startu: chybí offline překladač nebo jeho jazyky? Zeptá se (dokud uživatel nezvolí „už se neptat“)."""
+        def done(box):
+            self.offline_job.finish(box.get("error", ""))
+            if auto and dlg.chk_never.isChecked():
+                save_config({"offline_tr_never_ask": True})
+            if "error" in box:
+                log(f"Stažení offline překladače: {box['error']}")
+            dlg.finish(box)
+            if then:
+                then()
+
+        dlg.show()
+        self._run_bg(tx("📥 Stahuji offline překladač…"), lambda: install_offline_translator(dlg.progress), done)
+
+    def _startup_offline_check(self, on_done=None):
+        """At start: is the offline translator or one of its languages missing? Downloads them by itself and shows the
+        progress in a window (it can be turned off by ticking “Don't download automatically next time” in that window).
+        on_done() is called exactly once when this step is over (checked, downloaded, failed or turned off)."""
+        finish = on_done or (lambda: None)
         if load_config().get("offline_tr_never_ask"):
+            finish()
             return
 
         def checked(box):
             if "error" in box:
                 log(f"Kontrola offline překladače při startu selhala: {box['error']}")
+                finish()
                 return
             st = box["result"]
-            if st["installed"] and not st["missing"]:
+            if (st["installed"] and not st["missing"]) or (not st["installed"] and getattr(sys, "frozen", False)):
+                finish()                                # nothing to download (or nothing possible in this exe)
                 return
-            if not st["installed"] and getattr(sys, "frozen", False):
-                return                                  # exe bez překladače – nic se nedá doinstalovat
-            text = (tx("Offline překladač (Argos Translate) není nainstalovaný.") if not st["installed"] else
-                    tx("Offline překladači chybí jazykové modely: {missing}.",
-                       missing=", ".join(f"{a}→{b}" for a, b in st["missing"])))
-            text += "\n\n" + tx("Stáhnout ho teď? Překlad receptů pak funguje i bez internetu a bez API klíčů. "
-                                 "Stahuje se jednou (stovky MB, bez Pythonu knihoven až 1–2 GB).")
-            yes, never = self._ask_offline_download(text)
-            if never and not yes:
-                save_config({"offline_tr_never_ask": True})
-            if yes:
-                self._run_bg(tx("📥 Stahuji offline překladač…"), install_offline_translator, self._on_argos_installed)
+            log("Offline překladač chybí nebo nemá všechny jazyky – stahuji automaticky: "
+                + ", ".join(f"{a}→{b}" for a, b in st["missing"]))
+            self._start_offline_download(auto=True, then=finish)
 
         self._run_bg(tx("🌍 Zjišťuji stav offline překladače…"), offline_translator_state, checked)
 
-    def _on_argos_installed(self, box: dict):
-        if "error" in box:
-            QMessageBox.warning(self, tx("Offline překladač"), tx("Stažení se nepodařilo:\n\n{err}", err=box['error']))
+    # ---------------------------------------------------------------- start sequence
+    # What's new → offline translator → update check. Each step reports its end with _startup_done(step); the machine
+    # only moves on from the step it is really in, so a late or repeated report cannot skip or rerun a step.
+    STARTUP_FLOW = {"idle": {"whats_new"}, "whats_new": {"translator"}, "translator": {"update"},
+                    "update": {"ready"}, "ready": set()}
+    STARTUP_NEXT = {"idle": "whats_new", "whats_new": "translator", "translator": "update", "update": "ready"}
+
+    def _run_startup(self):
+        """Starts the start sequence (once per run; a second call does nothing)."""
+        if self.startup.is_in("idle"):
+            self._startup_done("idle")
+
+    def _startup_done(self, step: str):
+        nxt = self.STARTUP_NEXT.get(step)
+        if not nxt or not self.startup.is_in(step) or not self.startup.go(nxt):
             return
-        have = ", ".join(f"{a}→{b}" for a, b in box["result"].get("pairs", []))
-        QMessageBox.information(self, tx("Offline překladač"), tx("✅ Hotovo. Stažené modely: {have}\n\nPřeklad teď funguje i bez internetu.", have=have))
+        if nxt == "whats_new":
+            self._show_whats_new()                     # modal – returns when the window is closed
+            self._startup_done("whats_new")
+        elif nxt == "translator":
+            self._startup_offline_check(on_done=lambda: self._startup_done("translator"))
+        elif nxt == "update":
+            if update_mode():
+                self._check_update(manual=False, on_done=lambda: self._startup_done("update"))
+            else:
+                self._startup_done("update")           # Docker: nothing to update in place
+
+    # ---------------------------------------------------------------- updates
+    def _check_update(self, manual: bool = True, on_done=None):
+        """on_done() is called once the check is over: no update, error, or the offer was answered."""
+        finish = on_done or (lambda: None)
+
+        def done(box):
+            if "error" in box:
+                log(f"Kontrola aktualizace selhala: {box['error']}")
+                if manual:
+                    QMessageBox.warning(self, tx("Aktualizace"), tx("Novou verzi se nepodařilo zjistit:\n\n{err}", err=box["error"]))
+                finish()
+                return
+            rel = box["result"]
+            if rel is None:
+                if manual:
+                    QMessageBox.information(self, tx("Aktualizace"), tx("Máš nejnovější verzi ({v}).", v=APP_VERSION))
+                finish()
+                return
+            self._offer_update(rel, manual)
+            finish()
+
+        if manual:
+            save_config({"update_skip_version": ""})   # a manual check shows a skipped version again
+        self._run_bg(tx("🔄 Hledám novou verzi…"), check_for_update, done)
+
+    def _offer_update(self, rel: dict, manual: bool = False):
+        mode = update_mode()
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle(tx("Aktualizace"))
+        if mode == "installer" and rel.get("exe_url"):
+            box.setText(tx("Na GitHubu je k dispozici nová verze {new} (máš {cur}).\n\nStáhnout a nainstalovat?",
+                           new=rel["version"], cur=APP_VERSION))
+            box.setInformativeText(tx("Aplikace se zavře, nainstaluje se nová verze a znovu se spustí. Recepty a nastavení zůstanou."))
+        else:
+            box.setText(tx("Na GitHubu je k dispozici nová verze {new} (máš {cur}).\n\nOtevřít stránku ke stažení?",
+                           new=rel["version"], cur=APP_VERSION))
+        if rel.get("notes"):
+            box.setDetailedText(rel["notes"][:4000])
+        b_yes = box.addButton(tx("ANO"), QMessageBox.ButtonRole.YesRole)
+        box.addButton(tx("NE"), QMessageBox.ButtonRole.NoRole)
+        chk = QCheckBox(tx("Tuto verzi přeskočit"))
+        if not manual:
+            box.setCheckBox(chk)
+        box.setDefaultButton(b_yes)
+        box.exec()
+        if box.clickedButton() is not b_yes:
+            if chk.isChecked():
+                save_config({"update_skip_version": rel["version"]})
+            return
+        if mode == "installer" and rel.get("exe_url"):
+            self._download_and_install(rel)
+        else:
+            QDesktopServices.openUrl(QUrl(rel.get("page") or UPDATE_PAGE))
+
+    def _download_and_install(self, rel: dict):
+        if not self.update_job.start(done=0, total=rel.get("exe_size") or 0, version=rel["version"]):
+            return                                     # already downloading
+        dlg = UpdateDownloadDialog(self.update_job, rel, self)
+
+        def done(box):
+            self.update_job.finish(box.get("error", ""))
+            if "error" in box:
+                log(f"Stažení aktualizace selhalo: {box['error']}")
+                dlg.fail(box["error"])
+                return
+            dlg.close()
+            self._run_installer(box["result"])
+
+        dlg.show()
+        self._run_bg(tx("⬇️ Stahuji novou verzi…"), lambda: download_update(rel, dlg.progress), done)
+
+    def _run_installer(self, installer: Path):
+        """Starts the installer on its own and quits, so it can replace the program files."""
+        cmd = installer_command(installer, app_dir())
+        log("Spouštím aktualizaci: " + " ".join(cmd))
+        try:
+            flags = 0x00000008 | 0x00000200 if os.name == "nt" else 0     # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen(cmd, creationflags=flags, close_fds=True)
+        except OSError as e:
+            QMessageBox.warning(self, tx("Aktualizace"), tx("Instalátor nejde spustit:\n\n{err}\n\nSpusť ho ručně: {path}",
+                                                            err=e, path=installer))
+            return
+        QApplication.quit()
 
     def _translator_label(self) -> str:
         if HAS_DEEPL and load_api_key():
@@ -6784,7 +8245,7 @@ class LocalChefStudio(QMainWindow):
             QMessageBox.information(self, tx("Uloženo"), tx("Nastavení Gemini klíče bylo uloženo."))
 
     def _switch_any_language(self, target_lang: str):
-        """Tlačítka Orig / EN / CZ v liště receptu: přepnou kartu i režim vaření (podle toho, co je zobrazené)."""
+        """Orig / EN / CZ buttons in the recipe bar: switch the card or the cooking mode (whichever is shown)."""
         if self.right_stack.currentIndex() == 1:
             self._switch_recipe_language(target_lang)
         else:
@@ -6812,7 +8273,8 @@ class LocalChefStudio(QMainWindow):
             self._show_translated_card(target_lang)
             return
 
-        if not self._ensure_translator():
+        # the recipe is already in this language → nothing is translated (only a copy), no translator or key needed
+        if not recipe_already_in(folder, self.device_mode, target_lang) and not self._ensure_translator():
             return
         self._start_translation(target_lang, lambda: self._show_translated_card(target_lang, reload_json=True))
 
@@ -6867,14 +8329,14 @@ class LocalChefStudio(QMainWindow):
         self._tr_timer.stop()
         self._tr_poll = None
         if pj["folder"] != self.current_recipe_folder:
-            return                                   # mezitím byl vybrán jiný recept; překlad zůstal uložený
+            return                                   # another recipe was selected meanwhile; the translation stays stored
         if st.get("state") == "done":
             pj["on_done"]()
             if self.combo_title_lang.currentData() != "orig":
-                self._load_catalog()             # přeložený název hned i v seznamu vlevo
+                self._load_catalog()             # translated title right away in the list on the left too
         else:
             if self.display_lang == pj["lang"] and not self._load_translated_json(pj["lang"]):
-                # starý překlad byl smazán (Přeložit znovu) a nový se nepovedl → zpět na originál
+                # the old translation was deleted (Translate again) and the new one failed → back to the original
                 if self.right_stack.currentIndex() == 0:
                     self._switch_card_language("orig")
                 else:
@@ -6896,7 +8358,7 @@ class LocalChefStudio(QMainWindow):
         data = self.current_offline_data or {}
         translated = self.display_lang != "orig" and (data.get("translated_by") or data.get("translation_same_language") or data.get("language"))
         if self._tr_poll:
-            return                                   # běží překlad – nechá se zobrazený průběh
+            return                                   # a translation is running – keep the shown progress
         self.lbl_tr_info.setVisible(bool(translated))
         self.btn_retranslate.setVisible(bool(translated))
         if translated:
@@ -6935,6 +8397,7 @@ class LocalChefStudio(QMainWindow):
         self.btn_icon_style.setToolTip(tx("Přepnout styl ikon před recepty"))
         self.btn_card_retranslate.setToolTip(tx("Přeložit znovu – smaže uložený překlad tohoto jazyka a přeloží recept i kartu znovu"))
         self.btn_offline_tr.setText(tx("📥 Stáhnout offline překladač"))
+        self.btn_check_update.setText(tx("🔄 Zkontrolovat aktualizace"))
         self.btn_translate_all.setText(tx("🌍 Přeložit všechny recepty (EN + CZ)…"))
         self.btn_whats_new.setText(tx("ℹ️ Co je nového a podmínky použití (verze {v})", v=APP_VERSION))
         self.act_how_to.setText(tx("❓ Návod k použití"))
@@ -7155,6 +8618,7 @@ class LocalChefStudio(QMainWindow):
         self.portion_scale = scale_val
         self._update_lang_and_scale_buttons()
         self._render_tm_step()
+        self._refresh_card_if_shown()
 
     def _switch_recipe_language(self, target_lang: str):
         if not self.current_recipe_folder:
@@ -7175,7 +8639,7 @@ class LocalChefStudio(QMainWindow):
             self._render_tm_step()
             return
 
-        if not self._ensure_translator():
+        if not recipe_already_in(self.current_recipe_folder, self.device_mode, target_lang) and not self._ensure_translator():
             return
         self._start_translation(target_lang, lambda: self._after_recipe_translation(target_lang))
 
@@ -7183,6 +8647,16 @@ class LocalChefStudio(QMainWindow):
         self.is_dark_mode = self.btn_theme_toggle.isChecked()
         self._apply_theme()
         self._inject_offline_page_fixes()
+        self._refresh_card_if_shown()
+
+    def _refresh_card_if_shown(self):
+        """The recipe card is drawn by the server with the theme, batch and units → reload it after a change."""
+        try:
+            shown = self.right_stack.currentIndex() == 0 and is_offline_card_url(self.webview.url().toString())
+        except Exception:
+            shown = False
+        if shown and self.current_recipe_folder:
+            self._switch_to_card_view()
 
     def _apply_theme(self):
         app = QApplication.instance()
@@ -7228,10 +8702,12 @@ class LocalChefStudio(QMainWindow):
         self.webpage.runJavaScript(js_fix)
 
     def _show_card(self, html_file: Path | None, lang: str = "orig"):
-        """Karta receptu přes vestavěný server (http://127.0.0.1) – styly a obrázky z webu se tak načtou
-        v každé verzi Qt WebEngine (u file:// je to blokované). Server neběží → záložně soubor."""
+        """Recipe card through the built-in server (http://127.0.0.1) – this way the website's styles and images load
+        in every Qt WebEngine version (file:// blocks them). Server not running → the file as a fallback."""
         if LAN_STATE["ok"] and self.current_recipe_id:
-            self.webview.setUrl(QUrl(local_card_url(self.current_recipe_id, lang)))
+            self.webview.setUrl(QUrl(local_card_url(self.current_recipe_id, lang, theme="dark" if self.is_dark_mode else "light",
+                                                    scale=f"{self.portion_scale:g}", metric=int(bool(self.use_metric_conversion)),
+                                                    ui=self.ui_lang)))
         elif html_file and html_file.exists():
             self.webview.setUrl(QUrl.fromLocalFile(str(html_file.resolve())))
 
@@ -7242,7 +8718,7 @@ class LocalChefStudio(QMainWindow):
             lang = "orig"
             if self.display_lang in ("en", "cs"):
                 tr_html = self.current_recipe_folder / f"page_snapshot_{self.display_lang}.html"
-                if tr_html.exists():
+                if tr_html.exists() or LAN_STATE["ok"]:          # the server card translates by itself (wait page)
                     html_file, lang = tr_html, self.display_lang
             self._show_card(html_file, lang)
 
@@ -7265,6 +8741,7 @@ class LocalChefStudio(QMainWindow):
         self.use_metric_conversion = self.btn_unit_toggle.isChecked()
         self.btn_unit_toggle.setText(self.t('metric_on' if self.use_metric_conversion else 'metric_off'))
         self._render_tm_step()
+        self._refresh_card_if_shown()
 
     def _go_online_cookidoo(self):
         self.right_stack.setCurrentIndex(0)
@@ -7302,16 +8779,18 @@ class LocalChefStudio(QMainWindow):
                     self._on_tree_item_clicked(it, 0)
                     return
         conn = sqlite3.connect(DB_PATH)
-        row = conn.execute("SELECT folder_path FROM recipes WHERE recipe_id = ?", (r_id,)).fetchone()
+        row = conn.execute("SELECT folder_path, source_platform FROM recipes WHERE recipe_id = ?", (r_id,)).fetchone()
         conn.close()
-        if row:            # recept je skrytý filtrem → zobrazit aspoň kartu
-            self.current_recipe_folder = resolve_recipe_folder(row[0])
-            self.current_recipe_id = r_id
+        if row:            # the recipe is hidden by a filter → show at least the card
+            # select() also resets language, step and data – before, they stayed from the previous recipe
+            self.view.select(resolve_recipe_folder(row[0]), r_id, row[1])
+            self._update_lang_and_scale_buttons()
+            self._load_active_device_json()
             self._show_card(ensure_clean_html_snapshot(self.current_recipe_folder), "orig")
 
-    # ---------------------------------------------------------------- hledání receptů na webech
+    # ---------------------------------------------------------------- recipe search on websites
     def _go_home(self):
-        """🏠 Domů: úvodní stránka s hledáním (ve vestavěném prohlížeči)."""
+        """🏠 Home: start page with search (in the built-in browser)."""
         self.right_stack.setCurrentIndex(0)
         if LAN_STATE["ok"]:
             self.webview.setUrl(QUrl(f"http://127.0.0.1:{LAN_PORT}/search?ui={self.ui_lang}&desk=1"))
@@ -7319,19 +8798,27 @@ class LocalChefStudio(QMainWindow):
             self._go_online_cookidoo()
 
     def _process_search_queue(self):
-        """Hledání zadaná na stránce /search (z počítače i z mobilu) spustí ve skrytých stránkách prohlížeče."""
+        """Searches entered on the /search page (from the computer or the phone) run in hidden browser pages."""
         with _SEARCH_LOCK:
-            keys, _SEARCH_QUEUE[:] = list(_SEARCH_QUEUE), []
-        for key in keys:
-            st = SEARCH_STATE.get(key)
-            if not st:
-                continue
-            for src_cfg in search_sources():
-                if src_cfg["id"] in st["sources"]:
-                    self._start_source_search(key, src_cfg, st["q"])
+            items, _SEARCH_QUEUE[:] = list(_SEARCH_QUEUE), []
+            todo = []
+            for key, sid in items:
+                s = SEARCH_STATE.get(key, {}).get("sources", {}).get(sid)
+                cfg = next((c for c in search_sources() if c["id"] == sid), None)
+                m = source_search_machine(key, sid)
+                if s and cfg and m and m.go("searching", attempt=m.data.get("attempt", 0) + 1):
+                    todo.append((key, cfg, s["query"]))   # the term for this website (possibly translated)
+        for key, cfg, q in todo:
+            self._start_source_search(key, cfg, q)
 
     def _start_source_search(self, key: str, cfg: dict, q: str):
-        # Stránka se opravdu vykreslí (mimo obrazovku) – jinak weby nenačtou líné obrázky a některé ani výsledky.
+        """One attempt in a hidden page. Timers of an older attempt find the machine in another attempt or state
+        and do nothing."""
+        m = source_search_machine(key, cfg["id"])
+        if m is None:
+            return
+        attempt = m.data.get("attempt", 0)
+        # The page is really rendered (off screen) – otherwise websites do not load lazy images and some not even results.
         view = QWebEngineView()
         page = QWebEnginePage(self.profile, view)
         view.setPage(page)
@@ -7343,58 +8830,81 @@ class LocalChefStudio(QMainWindow):
         except Exception:
             pass
         pid = f"{key}::{cfg['id']}"
+        page_url = cfg["url"].replace("{q}", urllib.parse.quote(q))
         self._search_pages[pid] = view
         js = SEARCH_EXTRACT_JS.replace("%PATTERN%", json.dumps(cfg["link"])).replace("%SCOPE%", json.dumps(cfg.get("scope") or ""))
-        state = {"tries": 0, "done": False, "best": []}
+        att = {"tries": 0, "best": []}
+
+        def current() -> bool:
+            return m.is_in("searching") and m.data.get("attempt") == attempt and not att.get("finished")
 
         def finish(results, status):
-            if state["done"]:
+            if not current() or att.get("finished"):
                 return
-            state["done"] = True
+            att["finished"] = True                        # a check thread may still run – timers must not finish twice
+            pg = self._search_pages.pop(pid, None)
+            if pg is not None:
+                pg.deleteLater()
+            if status == "blocked":
+                mark_site_blocked(cfg["id"], att.get("why", ""))
+                m.go("blocked")
+                return
+            if not results and advance_search_source(key, cfg["id"]):
+                return                                    # nothing found → next attempt (e.g. in English)
+            if results and cfg.get("check_method"):
+                # video recipes without a method are checked in a thread; the machine stays "searching" meanwhile
+                threading.Thread(target=publish, args=(results, status, cfg["check_method"]), daemon=True).start()
+            else:
+                publish(results, status)
+
+        def publish(results, status, check=""):
+            if check:
+                results = drop_results_without_method(results, check)
             with _SEARCH_LOCK:
                 s = SEARCH_STATE.get(key, {}).get("sources", {}).get(cfg["id"])
                 if s is not None:
                     s["results"] = results
-                    s["state"] = status
-            pg = self._search_pages.pop(pid, None)
-            if pg is not None:
-                pg.deleteLater()
+                m.go(status)
             missing = [r for r in results if not r.get("image")]
             if missing:
                 threading.Thread(target=fill_missing_images, args=(key, cfg["id"]), daemon=True).start()
 
         def got(raw):
-            if state["done"]:
+            if not current():
                 return
             try:
                 res = json.loads(raw) if isinstance(raw, str) else []
             except Exception:
                 res = []
             if isinstance(res, dict) and res.get("none"):
-                finish([], "done")                        # web výslovně píše, že nic nenašel
+                finish([], "done")                        # the website says explicitly that it found nothing
+                return
+            if isinstance(res, dict) and res.get("blocked"):
+                att["why"] = "stránka s odepřeným přístupem"
+                finish([], "blocked")
                 return
             res = rank_search_results(res if isinstance(res, list) else [], q, key.split("|", 1)[0])
-            state["tries"] += 1
-            # obrázky z předchozích pokusů zůstanou (stránka je načítá postupně při posouvání)
-            prev = {r["url"]: r for r in state["best"]}
+            att["tries"] += 1
+            # images from earlier attempts stay (the page loads them gradually while scrolling)
+            prev = {r["url"]: r for r in att["best"]}
             for r in res:
                 if not r.get("image") and prev.get(r["url"], {}).get("image"):
                     r["image"] = prev[r["url"]]["image"]
-            if len(res) >= len(state["best"]):
-                state["best"] = res
-            best = state["best"]
+            if len(res) >= len(att["best"]):
+                att["best"] = res
+            best = att["best"]
             with_img = sum(1 for r in best if r.get("image"))
-            if (best and (with_img >= 0.8 * len(best) or state["tries"] >= 5)) or state["tries"] >= 7:
+            if (best and (with_img >= 0.8 * len(best) or att["tries"] >= 5)) or att["tries"] >= 7:
                 finish(best, "done")
             else:
-                QTimer.singleShot(1300, extract)          # výsledky / obrázky se dotahují JavaScriptem → zkusit znovu
+                QTimer.singleShot(1300, extract)          # results / images are loaded by JavaScript → try again
 
         def extract():
-            if not state["done"] and pid in self._search_pages:
+            if current() and pid in self._search_pages:
                 try:
                     page.runJavaScript(js, got)
                 except RuntimeError:
-                    finish(state["best"], "done" if state["best"] else "error")
+                    finish(att["best"], "done" if att["best"] else "error")
 
         started = {"x": False}
 
@@ -7403,11 +8913,26 @@ class LocalChefStudio(QMainWindow):
                 started["x"] = True
                 extract()
 
-        # i když se stránka „nedonačte“ (reklamy, přesměrování souhlasu s cookies), výsledky už obvykle v ní jsou
+        def loading(info):
+            """HTTP 403 / 429 for the search page itself = the website's bot protection said no."""
+            try:
+                if not info.isErrorPage():               # main frame only: the search page or its redirect
+                    return
+                if info.errorDomain() == info.ErrorDomain.HttpStatusCodeDomain and info.errorCode() in (403, 429):
+                    att["why"] = f"HTTP {info.errorCode()}"
+                    finish([], "blocked")
+            except Exception:
+                pass                                       # older Qt without the details → JavaScript check below
+
+        try:
+            page.loadingChanged.connect(loading)
+        except Exception:
+            pass
+        # even when the page does not “finish loading” (ads, cookie consent redirects), the results are usually in it already
         page.loadFinished.connect(lambda ok: QTimer.singleShot(1500, kick))
         QTimer.singleShot(7000, kick)
-        QTimer.singleShot(30000, lambda: finish(state["best"], "done" if state["best"] else "error"))
-        page.setUrl(QUrl(cfg["url"].replace("{q}", urllib.parse.quote(q))))
+        QTimer.singleShot(30000, lambda: finish(att["best"], "done" if att["best"] else "error"))
+        page.setUrl(QUrl(page_url))
 
     def _get_all_existing_categories(self) -> list[str]:
         conn = sqlite3.connect(DB_PATH)
@@ -7415,13 +8940,15 @@ class LocalChefStudio(QMainWindow):
         c.execute("SELECT DISTINCT category FROM recipes WHERE category IS NOT NULL AND category != '' ORDER BY category")
         cats = [r[0] for r in c.fetchall()]
         conn.close()
-        for default_cat in ["Nezařazené", "Hlavní jídla", "Polévky", "Pečení & Dezerty", "Omáčky", "Monsieur Cuisine", "Cizojazyčné"] + self._custom_categories():
+        for default_cat in DEFAULT_CATEGORIES + self._custom_categories():
             if default_cat not in cats: cats.append(default_cat)
         return cats
 
     def _pick_category(self, title: str, prompt: str, current_raw: str | None) -> str | None:
         cats = self._get_all_existing_categories()
         labels = [cat_label(c) for c in cats]
+        if current_raw and current_raw not in cats:
+            cats.append(current_raw)                 # e.g. the website's own category for a new recipe
         idx = cats.index(current_raw) if current_raw in cats else 0
         picked, ok = QInputDialog.getItem(self, title, prompt, labels, idx, True)
         if not ok:
@@ -7466,10 +8993,27 @@ class LocalChefStudio(QMainWindow):
             recipe_id = other_recipe_id(url_str)
             source_platform = "other"
 
+        if self.save_flow.running():
+            if not silent:
+                QMessageBox.information(self, tx("Ukládání receptu"), tx("Recept se právě ukládá – počkej, až to doběhne."))
+            return
+        run = time.time()
+        self.save_flow.reset()
+        self.save_flow.go("waiting", recipe_id=recipe_id, url=url_str, run=run)
+        self.url_bar.setText(tx("⏳ Ukládám recept…"))
         QTimer.singleShot(1500, lambda: self._trigger_actual_save(recipe_id, url_str, silent, source_platform))
+        QTimer.singleShot(90000, lambda: self._save_watchdog(run))
+
+    def _save_watchdog(self, run: float):
+        """The page never answered (closed, crashed): free the save flow so the next save is possible. Not while
+        storing – that step may wait for the user to pick a category."""
+        if self.save_flow.data.get("run") == run and self.save_flow.is_in("waiting", "extracting"):
+            self.save_flow.go("failed", error="timeout")
+            log("Ukládání receptu: stránka neodpověděla do 90 s – ukládání zrušeno")
+            self.url_bar.setText(self.webview.url().toString())
 
     def _trigger_actual_save(self, recipe_id: str, url_str: str, silent: bool, source_platform: str, attempt: int = 0):
-        # Monsieur-cuisine.com dotahuje obsah JavaScriptem – počkáme, až jsou kroky opravdu v DOM.
+        # Monsieur-cuisine.com loads its content by JavaScript – wait until the steps are really in the DOM.
         js_ready = r"""(() => {
             try { window.scrollTo(0, document.body.scrollHeight); } catch (e) {}
             const ld = Array.from(document.querySelectorAll('script[type*="ld+json"]'))
@@ -7478,7 +9022,7 @@ class LocalChefStudio(QMainWindow):
             const hdr = /\n\s*(Příprava|Postup|Postup přípravy|Zubereitung|Preparation|Instructions|Przygotowanie)\s*:?\s*\n/i.test(t);
             const mcs = document.querySelector('.recipe-detail-live-note .text-pre-line');
             const mcsOk = !!(mcs && (mcs.textContent || '').trim().length > 30 && document.querySelector('.ingredient-group-view .v-list-item__title'));
-            // Strukturovaná data receptu (jemné kroky): MCS → mc-api.tecpal.com, Cookidoo → JSON verze stránky
+            // Structured recipe data (detailed steps): MCS → mc-api.tecpal.com, Cookidoo → JSON version of the page
             if (window.__ccApi === undefined) {
                 window.__ccApi = null;
                 const done = t => { window.__ccApi = t || ''; };
@@ -7502,6 +9046,7 @@ class LocalChefStudio(QMainWindow):
 
         def on_ready(ready):
             if ready or attempt >= 12:
+                self.save_flow.go("extracting", waited=attempt)
                 self._extract_page_now(recipe_id, url_str, silent, source_platform)
             else:
                 QTimer.singleShot(700, lambda: self._trigger_actual_save(recipe_id, url_str, silent, source_platform, attempt + 1))
@@ -7509,7 +9054,7 @@ class LocalChefStudio(QMainWindow):
         self.webpage.runJavaScript(js_ready, on_ready)
 
     def _extract_page_now(self, recipe_id: str, url_str: str, silent: bool, source_platform: str):
-        # innerText vynechává skrytý obsah → rozbalíme <details>/akordeony a vrátíme se nahoru
+        # innerText leaves out hidden content → expand <details>/accordions and go back to the top
         js_extract_visible = r"""(() => {
             try {
                 document.querySelectorAll('details').forEach(d => d.open = true);
@@ -7528,13 +9073,26 @@ class LocalChefStudio(QMainWindow):
             except Exception:
                 obj = {"text": payload or "", "api": ""}
             vt, api_raw = obj.get("text") or "", obj.get("api") or ""
-            self.webpage.toHtml(
-                lambda html: self._process_and_store_recipe(recipe_id, url_str, html, silent, source_platform, vt, api_raw)
-            )
+            self.webpage.toHtml(lambda html: self._store_extracted(recipe_id, url_str, html, silent, source_platform, vt, api_raw))
 
         self.webpage.runJavaScript(js_extract_visible, got_payload)
 
-    def _process_and_store_recipe(self, recipe_id: str, url_str: str, html: str, silent: bool, source_platform: str, visible_text: str = "", api_raw: str = ""):
+    def _store_extracted(self, recipe_id: str, url_str: str, html: str, silent: bool, source_platform: str,
+                         visible_text: str = "", api_raw: str = ""):
+        """Last step of the save flow: storing → done (saved) / skipped (no recipe on the page) / failed (error)."""
+        self.save_flow.go("storing")
+        try:
+            stored = self._process_and_store_recipe(recipe_id, url_str, html, silent, source_platform, visible_text, api_raw)
+            self.save_flow.go("done" if stored else "skipped")
+        except Exception as e:
+            self.save_flow.go("failed", error=str(e) or e.__class__.__name__)
+            raise                                      # the crash guard logs it and shows it
+        finally:
+            self.url_bar.setText(self.webview.url().toString())
+
+    def _process_and_store_recipe(self, recipe_id: str, url_str: str, html: str, silent: bool, source_platform: str,
+                                  visible_text: str = "", api_raw: str = "") -> bool:
+        """Extracts the recipe from the page HTML and stores it. False = nothing stored (video only / no recipe found)."""
         soup = BeautifulSoup(html, "html.parser")
 
         extracted = extract_recipe_content(soup, visible_text, recipe_id)
@@ -7544,7 +9102,7 @@ class LocalChefStudio(QMainWindow):
         steps_structured = extracted["steps"]
         tips = extracted.get("tips") or []
 
-        # Strukturovaná data z API → jemné kroky (+ záloha pro kroky/suroviny)
+        # Structured data from the API → detailed steps (+ fallback for steps/ingredients)
         fine_steps, fine_src = [], "fallback"
         api_obj = {}
         try:
@@ -7583,14 +9141,15 @@ class LocalChefStudio(QMainWindow):
                     recipe_ld["recipeYield"] = sc["yields"]
                 if sc["image"] and not recipe_ld.get("image"):
                     recipe_ld["image"] = sc["image"]
-            is_video = (not steps_structured and not ingredients and (
+            # a video page without a method (Prima FRESH /videorecepty/: ingredients only, the method is in the video)
+            is_video = (not steps_structured and (
                 "/video" in url_str.lower() or re.search(r'"@type"\s*:\s*"VideoObject"', html) is not None or soup.find("video") is not None))
             if is_video:
                 if not silent:
                     QMessageBox.information(self, tx("Jen video"),
-                                            tx("Tahle stránka obsahuje jen video – nejsou na ní suroviny ani postup, takže recept nejde uložit.\n\n"
+                                            tx("Tahle stránka je video recept – postup receptu je jen ve videu, ne v textu, takže recept nejde uložit.\n\n"
                                                "Zkus najít stejný recept jako textový (např. přes 🏠 Domů a hledání)."))
-                return
+                return False
             if not steps_structured or not ingredients:
                 if not silent:
                     QMessageBox.warning(self, tx("Recept nerozpoznán"),
@@ -7598,9 +9157,9 @@ class LocalChefStudio(QMainWindow):
                                            "Tip: nainstaluj knihovnu recipe-scrapers (py -m pip install recipe-scrapers), "
                                            "ta zná stovky webů s recepty."))
                 if not steps_structured and not ingredients:
-                    return
+                    return False
             fine_steps = fine_steps or fine_steps_from_steps(steps_structured)
-        default_cat = "Monsieur Cuisine" if source_platform == "mcs" else "Nezařazené"
+        default_cat = site_info(url_str, source_platform)["category"]     # every website its own default category
         chosen_category = default_cat
         if not silent:
             picked = self._pick_category(tx("Kategorie"), tx("Vyber kategorii:"), default_cat)
@@ -7617,8 +9176,8 @@ class LocalChefStudio(QMainWindow):
         for bad_el in soup.select(".search-overlay, .modal, #sliding-popup, .eu-cookie-compliance-banner, [role='alert'], [class*='toast'], [class*='notification']"):
             bad_el.decompose()
 
-        # Ostatní weby: karta receptu jen s receptem (bez menu, reklam, souvisejících článků a diskuze).
-        # Cookidoo a MCS mají stránku receptu bez balastu a karta s ní počítá – tam se nic neořezává.
+        # Other websites: recipe card with the recipe only (no menu, ads, related articles and discussion).
+        # Cookidoo and MCS have a recipe page without clutter and the card relies on it – nothing is trimmed there.
         if source_platform == "other":
             try:
                 if trim_recipe_page(soup, recipe_ld, ingredients, [s.get("text", "") for s in steps_structured]):
@@ -7639,14 +9198,14 @@ class LocalChefStudio(QMainWindow):
             base_tag = soup.new_tag("base", href=base_origin)
             soup.head.insert(0, base_tag)
 
-        # Po novém uložení musí zmizet staré konverze/překlady, jinak se dál zobrazují staré (rozbité) kroky.
+        # After saving again the old conversions/translations must go, otherwise the old (broken) steps keep showing.
         for stale in list(folder.glob("recipe_*.json")) + list(folder.glob("page_snapshot_*.html")):
             try:
                 stale.unlink()
             except Exception:
                 pass
 
-        # Ladicí výpis – co aplikace ze stránky skutečně dostala
+        # Debug dump – what the app really got from the page
         try:
             (folder / "_debug_visible_text.txt").write_text(visible_text or "", encoding="utf-8")
             (folder / "_debug_ld.json").write_text(json.dumps(recipe_ld, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -7676,7 +9235,7 @@ class LocalChefStudio(QMainWindow):
         if source_platform == "other":
             recipe_payload["source_site"] = urllib.parse.urlparse(url_str).netloc.replace("www.", "")
         (folder / "recipe.json").write_text(json.dumps(recipe_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        schedule_page_assets(folder)          # styly, písma a obrázky karty receptu → sdílená složka web_assets
+        schedule_page_assets(folder)          # styles, fonts and images of the recipe card → shared web_assets folder
 
         opposite_device = "tm6" if source_platform == "mcs" else "mcs"
         ensure_device_recipe_file(folder, opposite_device)
@@ -7686,7 +9245,7 @@ class LocalChefStudio(QMainWindow):
         c.execute("SELECT is_favorite FROM recipes WHERE recipe_id = ?", (recipe_id,))
         row = c.fetchone()
         fav_val = row[0] if row else 0
-        (folder / DELETED_MARK).unlink(missing_ok=True)      # znovu uložený recept už není smazaný
+        (folder / DELETED_MARK).unlink(missing_ok=True)      # a recipe saved again is no longer deleted
         if fav_val:
             set_recipe_json_field(folder, "is_favorite", True)
         c.execute("""
@@ -7703,6 +9262,7 @@ class LocalChefStudio(QMainWindow):
         if not silent:
             plat_name = {"mcs": "Monsieur Cuisine", "other": urllib.parse.urlparse(url_str).netloc.replace("www.", "")}.get(source_platform, "Cookidoo TM6")
             QMessageBox.information(self, tx("Uloženo"), tx("Recept '{title}' ({plat}) byl uložen včetně konverze pro druhý stroj!", title=title, plat=plat_name))
+        return True
 
     def _on_page_load_finished(self, ok: bool):
         if not ok: return
@@ -7710,8 +9270,8 @@ class LocalChefStudio(QMainWindow):
             self._inject_offline_page_fixes()
 
     def _stop_batch(self):
-        if getattr(self, "_bulk_active", False):
-            BULK_TR["stop"] = True
+        if BULK_TR.running:
+            BULK_TR.cancel()
             self.lbl_batch_status.setText(tx("⏹ Zastavuji po dokončení aktuálního receptu…"))
             return
         self.batch_bar_frame.setVisible(False)
@@ -7773,15 +9333,11 @@ class LocalChefStudio(QMainWindow):
             return
 
         folder = resolve_recipe_folder(folder_str)
-        self.current_recipe_folder = folder
-        self.current_recipe_id = item.data(0, Qt.ItemDataRole.UserRole + 1)
+        self.view.select(folder, item.data(0, Qt.ItemDataRole.UserRole + 1), item.data(0, Qt.ItemDataRole.UserRole + 4))
         is_fav = item.data(0, Qt.ItemDataRole.UserRole + 2)
-        self.current_source_platform = item.data(0, Qt.ItemDataRole.UserRole + 4) or "tm6"
 
         self.btn_toggle_fav.setText(self.t('fav_btn_on' if is_fav else 'fav_btn_off'))
 
-        self.display_lang = "orig"
-        self.current_step_index = 0
         self._update_lang_and_scale_buttons()
         self._load_active_device_json()
 
@@ -7817,7 +9373,7 @@ class LocalChefStudio(QMainWindow):
             self._on_recipe_drag_dropped(r_id, item.data(0, Qt.ItemDataRole.UserRole), new_cat)
 
     def _export_current_to_pdf(self):
-        """Hezký list receptu do PDF: obrázek, suroviny, nutriční hodnoty, postup a tipy (bez reklam a menu webu)."""
+        """Nice recipe sheet for the PDF: image, ingredients, nutrition, method and tips (without the website's ads and menus)."""
         folder = self.current_recipe_folder
         if not folder or not (Path(folder) / "recipe.json").exists():
             QMessageBox.information(self, tx("Export do PDF"), tx("Nejprve vyber recept v seznamu vlevo."))
@@ -7841,7 +9397,7 @@ class LocalChefStudio(QMainWindow):
             ex = recipe_extras(folder)
             img_path = ""
             if ex.get("image"):
-                rel = cache_asset(ex["image"], ex["image"])         # obrázek ze sdílené mezipaměti (stáhne se jen jednou)
+                rel = cache_asset(ex["image"], ex["image"])         # image from the shared cache (downloaded only once)
                 if rel and (WEB_ASSETS_DIR / rel).exists():
                     img_path = str(WEB_ASSETS_DIR / rel)
             return img_path
@@ -7851,25 +9407,7 @@ class LocalChefStudio(QMainWindow):
             try:
                 html = render_recipe_sheet(folder, lang, device, self.ui_lang, "pdf", self.portion_scale,
                                            self.use_metric_conversion, "cc-hero" if img_path else "")
-                doc = QTextDocument()
-                doc.setDocumentMargin(0)
-                doc.setDefaultFont(QFont("Segoe UI", 10))
-                if img_path:
-                    img = QImage(img_path)
-                    if not img.isNull():
-                        if img.width() > 1200:
-                            img = img.scaledToWidth(1200, Qt.TransformationMode.SmoothTransformation)
-                        doc.addResource(QTextDocument.ResourceType.ImageResource.value, QUrl("cc-hero"), img)
-                doc.setHtml(html)
-                writer = QPdfWriter(target_path)
-                writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-                writer.setPageMargins(QMarginsF(12, 10, 12, 10), QPageLayout.Unit.Millimeter)
-                writer.setResolution(110)
-                writer.setTitle(title)
-                writer.setCreator(APP_NAME)
-                doc.print(writer)
-                del writer
-                ok = Path(target_path).exists() and Path(target_path).stat().st_size > 500
+                ok = write_recipe_pdf(html, target_path, title, img_path)
             except Exception as e:
                 log("Export do PDF selhal:\n" + traceback.format_exc())
                 QMessageBox.warning(self, tx("Export do PDF"), tx("PDF se nepodařilo vytvořit:\n\n{err}", err=e))
@@ -7882,7 +9420,7 @@ class LocalChefStudio(QMainWindow):
         self._run_bg(tx("🖨️ Připravuji PDF…"), prepare, done)
 
     def _bulk_translate(self):
-        if BULK_TR["running"]:
+        if BULK_TR.running:
             QMessageBox.information(self, tx("Hromadný překlad"), tx("Hromadný překlad už běží – průběh vidíš v modré liště nahoře."))
             return
         if not self._ensure_translator():
@@ -7914,6 +9452,7 @@ class LocalChefStudio(QMainWindow):
                "Běží to na pozadí, aplikaci můžeš dál používat. Už hotové překlady se přeskočí.", n=n_rec, k=len(todo), engine=engine))
         if ans != QMessageBox.StandardButton.Yes:
             return
+        BULK_TR.start(done=0, total=len(todo), failed=0, current="", errors=[])
         threading.Thread(target=run_bulk_translation, args=(todo,), daemon=True).start()
         self.batch_bar_frame.setVisible(True)
         self.progress_batch.setMaximum(len(todo))
@@ -7922,23 +9461,21 @@ class LocalChefStudio(QMainWindow):
         self._bulk_timer.setInterval(700)
         self._bulk_timer.timeout.connect(self._poll_bulk_translation)
         self._bulk_timer.start()
-        self._bulk_active = True
 
     def _poll_bulk_translation(self):
-        st = BULK_TR
-        self.progress_batch.setValue(st["done"])
-        self.lbl_batch_status.setText(tx("🌍 Překládám {d}/{t}: {cur}", d=st["done"], t=st["total"], cur=st["current"]))
-        if st["running"]:
+        st = BULK_TR.data
+        self.progress_batch.setValue(st.get("done", 0))
+        self.lbl_batch_status.setText(tx("🌍 Překládám {d}/{t}: {cur}", d=st.get("done", 0), t=st.get("total", 0), cur=st.get("current", "")))
+        if BULK_TR.running:
             return
         self._bulk_timer.stop()
-        self._bulk_active = False
         self.batch_bar_frame.setVisible(False)
         self.lbl_batch_status.setText(self.t('batch_lbl'))
         self._load_catalog()
         msg = tx("Hotovo: přeloženo {ok} z {t}.", ok=st["done"] - st["failed"], t=st["total"])
         if st["failed"]:
             msg += "\n" + tx("Nepovedlo se: {f} (podrobnosti v app.log). Spusť hromadný překlad znovu – hotové se přeskočí.", f=st["failed"])
-        if st["stop"]:
+        if BULK_TR.is_in("cancelled"):
             msg = tx("Hromadný překlad zastaven.") + "\n" + msg
         QMessageBox.information(self, tx("Hromadný překlad"), msg)
 
@@ -7954,7 +9491,7 @@ class LocalChefStudio(QMainWindow):
         try:
             folder = resolve_recipe_folder(item.data(0, Qt.ItemDataRole.UserRole))
             if self.current_recipe_folder and Path(self.current_recipe_folder).resolve() == folder.resolve():
-                self.webview.setHtml("")          # zobrazený recept uvolnit, ať jde složka přesunout
+                self.webview.setHtml("")          # release the shown recipe so the folder can be moved
             move_recipe_to_trash(folder)
         except Exception as e:
             log(f"Smazaný recept se nepodařilo přesunout do koše: {e}")
@@ -8012,11 +9549,11 @@ class LocalChefStudio(QMainWindow):
         self._on_recipe_drag_dropped(item.data(0, Qt.ItemDataRole.UserRole + 1), item.data(0, Qt.ItemDataRole.UserRole), raw_cat)
 
     def _recipe_context_menu(self, pos):
-        """Pravé tlačítko na receptu: oblíbené, přesun do kategorie (i do nové), zobrazení, PDF, smazání."""
+        """Right click on a recipe: favourite, move to a category (also a new one), view, PDF, delete."""
         item = self.recipe_tree.itemAt(pos)
         if item is None or item.data(0, Qt.ItemDataRole.UserRole) is None:
             return
-        if not item.isSelected():                 # klik mimo označené → pracuje se jen s tímto receptem
+        if not item.isSelected():                 # click outside the selection → work with this recipe only
             self.recipe_tree.setCurrentItem(item)
         n_sel = len(self._selected_recipe_items())
         cur_cat = item.data(0, Qt.ItemDataRole.UserRole + 3) or "Nezařazené"
@@ -8062,7 +9599,7 @@ class LocalChefStudio(QMainWindow):
         menu.exec(self.recipe_tree.viewport().mapToGlobal(pos))
 
     def _selected_recipe_items(self) -> list:
-        """Označené recepty v seznamu (Ctrl/Shift + klik). Označená kategorie = všechny její viditelné recepty."""
+        """Selected recipes in the list (Ctrl/Shift + click). A selected category = all its visible recipes."""
         out, seen = [], set()
 
         def add(it):
@@ -8083,7 +9620,7 @@ class LocalChefStudio(QMainWindow):
         return out
 
     def _export_backup(self):
-        """📦 Export zálohy: označené recepty → jeden .7z (výchozí složka localchef_data/exported_recipes)."""
+        """📦 Backup export: selected recipes → one .7z (default folder localchef_data/exported_recipes)."""
         title = tx("Export receptů")
         if not has_py7zr():
             QMessageBox.warning(self, title, tx("Export potřebuje knihovnu py7zr:\n\n    py -m pip install py7zr\n\nPotom aplikaci restartuj."))
@@ -8112,7 +9649,7 @@ class LocalChefStudio(QMainWindow):
         self._run_bg(tx("📦 Balím recepty do .7z…"), lambda: export_recipes_backup(folders, Path(target)), done)
 
     def _import_backup(self):
-        """📥 Import: jedna nebo víc záloh .7z → recepty do kuchařky (i se styly a obrázky karet)."""
+        """📥 Import: one or more .7z backups → recipes into the cookbook (with card styles and images)."""
         title = tx("Import receptů")
         if not has_py7zr():
             QMessageBox.warning(self, title, tx("Import potřebuje knihovnu py7zr:\n\n    py -m pip install py7zr\n\nPotom aplikaci restartuj."))
@@ -8165,7 +9702,7 @@ class LocalChefStudio(QMainWindow):
         HowToDialog(self.ui_lang, parent=self).exec()
 
     def _show_whats_new(self, on_start: bool = True):
-        """Při startu (dokud si to uživatel u této verze nevypne) a z menu ⚙️."""
+        """At start (until the user turns it off for this version) and from the ⚙️ menu."""
         if on_start and load_config().get("whats_new_hidden") == APP_VERSION:
             return
         dlg = WhatsNewDialog(self.ui_lang, show_checkbox=on_start, parent=self)
@@ -8174,7 +9711,7 @@ class LocalChefStudio(QMainWindow):
             save_config({"whats_new_hidden": APP_VERSION})
 
     def _apply_tooltips(self):
-        """Ke každému tlačítku a volbě nápověda po najetí myší (v jazyce aplikace)."""
+        """A hover hint for every button and option (in the app's language)."""
         en = self.ui_lang == "en"
         for attr, (cs_txt, en_txt) in WIDGET_TOOLTIPS.items():
             w = getattr(self, attr, None)
@@ -8209,7 +9746,7 @@ class LocalChefStudio(QMainWindow):
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        query = "SELECT recipe_id, title, folder_path, category, is_favorite, source_platform, title_en, title_cs FROM recipes WHERE 1=1"
+        query = "SELECT recipe_id, title, folder_path, category, is_favorite, source_platform, title_en, title_cs, url FROM recipes WHERE 1=1"
         params = []
         if selected_cat_data:
             query += " AND category = ?"
@@ -8243,12 +9780,12 @@ class LocalChefStudio(QMainWindow):
             return cat_nodes[cat_name]
 
         for r in rows:
-            r_id, title, folder_path, category, is_fav, source_plat, t_en, t_cs = r
+            r_id, title, folder_path, category, is_fav, source_plat, t_en, t_cs, src_url = r
             cat_name = category if category else "Nezařazené"
             parent = cat_node(cat_name)
             cat_counts[cat_name] += 1
             plat_code = (source_plat or "tm6").lower()
-            prefix_icons = get_recipe_icon_prefix(plat_code, bool(is_fav), self.icon_style)
+            prefix_icons = get_recipe_icon_prefix(plat_code, bool(is_fav), self.icon_style, src_url or "")
             child = QTreeWidgetItem(parent)
             shown = shown_title(r)
             child.setText(0, f"{prefix_icons}{shown}")
@@ -8262,7 +9799,7 @@ class LocalChefStudio(QMainWindow):
             child.setData(0, Qt.ItemDataRole.UserRole + 5, search_key(" ".join(x or "" for x in (title, t_en, t_cs))))
             child.setData(0, Qt.ItemDataRole.UserRole + 6, shown)
 
-        # prázdné vlastní kategorie – aby šlo recepty přetáhnout i do nich
+        # empty custom categories – so recipes can be dragged into them too
         if not selected_plat or selected_plat == "all":
             if not only_fav:
                 for cat in self._custom_categories():
@@ -8407,7 +9944,7 @@ class LocalChefStudio(QMainWindow):
         self.btn_next_step.setEnabled(idx < total - 1)
 
     def _extras_html(self, accent_col: str) -> str:
-        """Nutriční hodnoty a tipy pod surovinami (popisky v jazyce aplikace, tipy v jazyce receptu)."""
+        """Nutrition and tips under the ingredients (labels in the app's language, tips in the recipe's language)."""
         folder = self.current_recipe_folder
         if not folder:
             return ""
@@ -8417,7 +9954,7 @@ class LocalChefStudio(QMainWindow):
             return ""
         out = ""
         ui = self.ui_lang
-        nut = [(NUTRI_LABELS[k][1 if ui == "en" else 0], ex["nutrition"][k]) for k in NUTRI_LABELS if k in ex.get("nutrition", {})]
+        nut = [(NUTRI_LABELS[k][1 if ui == "en" else 0], nutri_value_text(ex["nutrition"][k])) for k in NUTRI_LABELS if k in ex.get("nutrition", {})]
         if nut:
             per = f" <span style='color:#9E9E9E; font-weight:normal;'>({_st('per', ui)} {html_mod.escape(ex['nutrition_per'])})</span>" if ex.get("nutrition_per") else ""
             rows = "".join(f"<tr><td style='color:#BDBDBD; padding-right:12px;'>{html_mod.escape(k)}</td><td><b>{html_mod.escape(v)}</b></td></tr>" for k, v in nut)
@@ -8442,7 +9979,7 @@ class LocalChefStudio(QMainWindow):
 
 
 def _install_crash_guard():
-    """PyQt6 při neošetřené výjimce v obsluze tlačítka celou aplikaci ukončí – tohle ji jen zaloguje a ukáže."""
+    """PyQt6 quits the whole app on an unhandled exception in a button handler – this only logs and shows it."""
     def hook(etype, value, tb):
         txt = "".join(traceback.format_exception(etype, value, tb))
         log("NEOŠETŘENÁ CHYBA:\n" + txt)
@@ -8456,10 +9993,10 @@ def _install_crash_guard():
 
 if __name__ == "__main__":
     _install_crash_guard()
-    start_web_assets_check()          # při startu ověří, jestli weby nezměnily styly karet receptu
+    start_web_assets_check()          # checks at start whether websites changed the styles of recipe cards
     app = QApplication(sys.argv)
     window = LocalChefStudio()
     window.show()
-    # „Co je nového“ + podmínky použití, potom kontrola offline překladače (dialogy jdou po sobě)
-    QTimer.singleShot(400, lambda: (window._show_whats_new(), window._startup_offline_check()))
+    # start sequence: What's new + terms of use → offline translator → update check (one after another)
+    QTimer.singleShot(400, window._run_startup)
     sys.exit(app.exec())

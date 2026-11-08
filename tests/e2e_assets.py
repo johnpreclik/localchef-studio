@@ -12,14 +12,14 @@ sys.modules["PyQt6.QtCore"].pyqtSignal = lambda *a, **k: Dummy()
 src = open(sys.argv[1], encoding="utf-8").read().split('if __name__ == "__main__":\n    _install_crash_guard')[0]
 g = {"__name__": "app"}; exec(compile(src, "app", "exec"), g)
 g["init_db"]()
-# falešný internet
+# fake internet
 WEB = {
  "https://cookidoo.cz/assets/main.css": (b"@import 'extra.css'; body{background:url(../img/bg.png)} @font-face{src:url('/fonts/a.woff2')}", "text/css"),
  "https://cookidoo.cz/assets/extra.css": (b".x{color:red}", "text/css"),
  "https://cookidoo.cz/img/bg.png": (b"PNGDATA", "image/png"),
  "https://cookidoo.cz/fonts/a.woff2": (b"FONT", "font/woff2"),
  "https://assets.tmecosys.com/r1.jpg": (b"JPG1", "image/jpeg"),
- "https://assets.tmecosys.com/r2.jpg": (b"JPG1", "image/jpeg"),   # stejný obsah → jeden soubor
+ "https://assets.tmecosys.com/r2.jpg": (b"JPG1", "image/jpeg"),   # same content → one file
 }
 calls = []
 class Resp:
@@ -47,7 +47,7 @@ files = sorted(str(p.relative_to(W)) for p in W.rglob("*") if p.is_file())
 print("web_assets:", files)
 css = [p for p in W.rglob("*.css")]
 print("CSS absolutní:", all("https://cookidoo.cz/" in p.read_text(encoding="utf-8") for p in css if "url(" in p.read_text(encoding="utf-8") or "@import" in p.read_text(encoding="utf-8")))
-# karta
+# card
 H = g["LanCookidooHandler"]
 def get(path, host="192.168.1.5:3665"):
     h = H.__new__(H); h.path = path; h.wfile = io.BytesIO(); h.headers = {"Host": host}; h.st = []
@@ -62,6 +62,6 @@ h = get("/assets/" + rel); print("server /assets:", h.st[0], [a for a in h.st if
 h = get("/assets/../index.json"); print("path traversal:", h.st)
 h = get("/assets/%2e%2e/%2e%2e/cookidoo.db"); print("path traversal 2:", h.st)
 time.sleep(0.5)
-# offline: znovu – nic se nestahuje, zůstává
+# offline: again – nothing is downloaded, it stays
 g["urllib"].request.urlopen = lambda *a, **k: (_ for _ in ()).throw(OSError("offline"))
 print("offline cache:", g["cache_asset"]("https://cookidoo.cz/assets/main.css"))

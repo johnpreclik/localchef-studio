@@ -31,26 +31,34 @@ d._set_lang("en"); print("EN:", "What’s new" in d.view.html, d.chk_hide.text()
 d.view.sb.setValue(500); print("after scroll:", d.btn_ok.isEnabled(), d.btn_ok.text(), d.chk_hide.isEnabled())
 d._set_lang("cs"); print("lang after read stays OK:", d.btn_ok.isEnabled())
 d2 = D("cs", False); d2.view.sb.mx = 0; d2._after_shown(); print("short text enabled:", d2.btn_ok.isEnabled())
-# zdroje + stránka
+# sources + page
 H = g["LanCookidooHandler"]
 def get(path):
     h = H.__new__(H); h.path = path; h.wfile = io.BytesIO(); h.headers = {"Host": "pc"}
     h.send_response = lambda c: None; h.send_header = lambda *a: None; h.end_headers = lambda: None; h.send_error = print
     h.do_GET(); return h.wfile.getvalue()
 print("sources:", [(s["name"], s["home"]) for s in json.loads(get("/api/sources"))])
-# og:image doplnění
+# filling in og:image
 g["_og_image"] = lambda u: "https://img/" + u.split("/")[-1] + ".jpg"
 st = g["request_web_search"]("gulas", "title"); key = g["search_key_of"]("gulas", "title")
 g["SEARCH_STATE"][key]["sources"]["bbcgoodfood"].update(state="done", results=[{"url": "https://www.bbcgoodfood.com/recipes/goulash", "title": "Goulash", "image": ""}])
 g["fill_missing_images"](key, "bbcgoodfood")
 print("og filled:", g["SEARCH_STATE"][key]["sources"]["bbcgoodfood"])
 
-# jen video
+# video only
 win = g["LocalChefStudio"](); win.is_batch_running = False
 fakeqt.msgs.clear()
 html = '<html><head><script type="application/ld+json">{"@type":"VideoObject","name":"Poctivá zelňačka"}</script></head><body><video src="x.mp4"></video></body></html>'
 win._process_and_store_recipe("web_x", "https://fresh.iprima.cz/videa/poctiva-zelnacka-s-klobasou", html, False, "other")
 print("video msg:", fakeqt.msgs[-1][1][:60] if fakeqt.msgs else None, "| saved:", list(g["RECIPES_DIR"].iterdir()))
+# a video recipe WITH ingredients but no method (Prima FRESH /videorecepty/) is refused too
+fakeqt.msgs.clear()
+html2 = ('<html><head><script type="application/ld+json">[{"@type":"VideoObject","name":"Kulajda"},'
+         '{"@type":"Recipe","name":"Kulajda","recipeIngredient":["500 ml vody","200 g hub","1 brambora"]}]</script></head>'
+         '<body><h1>Kulajda</h1><h2>Ingredience</h2><ul><li>500 ml vody</li><li>200 g hub</li><li>1 brambora</li></ul></body></html>')
+stored = win._process_and_store_recipe("web_y", "https://fresh.iprima.cz/videorecepty/kulajda", html2, False, "other")
+print("video recipe with ingredients:", stored, fakeqt.msgs[-1][1][:50] if fakeqt.msgs else None)
+assert stored is False and fakeqt.msgs and "video recept" in fakeqt.msgs[-1][1] and not list(g["RECIPES_DIR"].iterdir())
 win._go_home(); print("home ok")
 import re
 print("iprima regex skips /videa/:", re.search(g["DEFAULT_SEARCH_SOURCES"][2]["link"], "https://fresh.iprima.cz/videa/poctiva-zelnacka") is None, re.search(g["DEFAULT_SEARCH_SOURCES"][2]["link"], "https://fresh.iprima.cz/recky-gulas") is not None)

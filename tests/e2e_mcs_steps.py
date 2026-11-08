@@ -1,4 +1,4 @@
-"""MCS komunitní recepty: kroky jako karty (číslo, název, text / nastavení), seznam na stránce dvakrát; teplota „℃“."""
+"""MCS community recipes: steps as cards (number, title, text / settings), the list twice on the page; temperature “℃”."""
 import sys, os
 sys.path.insert(0, os.path.dirname(__file__))
 import stub
@@ -30,7 +30,7 @@ assert ex["steps"][3]["dials"]["speed"] == "Speed 8", ex["steps"][3]["dials"]
 print("℃ v textu:", g["extract_tm_dials"]("Vař 10 min při 98℃")["temp"])
 assert g["extract_tm_dials"]("Vař 10 min při 98℃")["temp"] == "98 °C"
 
-# řazení výsledků hledání z webu: výsledky se slovem z dotazu dopředu (kmen bez diakritiky)
+# ordering of web search results: results with the query word first (stem without accents)
 res = [{"title": "Frappé ledová káva", "url": "https://x/recipe/frappe"}, {"title": "Rajská polévka", "url": "https://x/recipe/rajska"},
        {"title": "Zelná polévka s klobásou", "url": "https://x/recipe/zelna"}, {"title": "Poctivá zelňačka", "url": "https://x/recipe/zelnacka"}]
 ranked = [r["title"] for r in g["rank_search_results"](res, "zelňačka", "title")]

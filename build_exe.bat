@@ -81,6 +81,13 @@ for %%f in (msvcp140.dll msvcp140_1.dll msvcp140_2.dll msvcp140_atomic_wait.dll 
 )
 echo Pribaleny knihovny Visual C++ runtime.
 
+rem Knihovny z balicku "delvewheel" (napr. sentencepiece.libs\msvcp140-<hash>.dll pro offline prekladac):
+rem PyInstaller cast z nich vynecha, protoze vypadaji jako Visual C++ runtime -> zkopirovat cele slozky *.libs.
+for /d %%d in (".venv-build\Lib\site-packages\*.libs") do (
+  if exist "%DIST%\_internal\%%~nxd" xcopy /y /q "%%d\*" "%DIST%\_internal\%%~nxd\" >nul
+)
+echo Pribaleny knihovny *.libs (sentencepiece a dalsi).
+
 echo ================================================================
 echo  HOTOVO:  %CD%\%DIST%\LocalChefStudio.exe
 echo  Cisty program bez dat. Na jiny pocitac prenes CELOU slozku %DIST%.

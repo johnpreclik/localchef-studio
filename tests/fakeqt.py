@@ -14,7 +14,7 @@ class Meta(type):
         if n.startswith("__"): raise AttributeError(n)
         return Enumish()
 class W(metaclass=Meta):
-    """Univerzální widget: pamatuje si text, data, stav a nabízí signály."""
+    """Universal widget: remembers text, data, state and offers signals."""
     def __init__(self, *a, **k):
         self._text = a[0] if a and isinstance(a[0], str) else ""
         self._items = []; self._idx = -1; self._checked = bool(k.get("checkable") and False); self._visible = True
@@ -135,6 +135,7 @@ class Doc:
     def __init__(self): self.res = {}
     def setDefaultFont(self, f): pass
     def setDocumentMargin(self, m): pass
+    def setPageSize(self, size): self.page_size = size
     def addResource(self, t, u, r): self.res[str(u)] = r
     def setHtml(self, h): self.html = h
     def print(self, w): printed["html"] = self.html; open(w.path, "wb").write(b"%PDF-1.4 " + b"x" * 2000)

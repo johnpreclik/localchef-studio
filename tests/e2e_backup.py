@@ -1,5 +1,5 @@
-"""Verze 1.3: záloha receptů do .7z (označené recepty / kategorie → export) a import jednoho či více .7z,
-i se styly a obrázky karet; přepsání → koš; podezřelý archiv se odmítne; přejmenování cookidoo_data → localchef_data."""
+"""Version 1.3: recipe backup into .7z (selected recipes / category → export) and import of one or more .7z,
+with card styles and images; overwrite → trash; a suspicious archive is refused; renaming cookidoo_data → localchef_data."""
 import sys, os, json, sqlite3, shutil, tempfile
 from pathlib import Path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -49,11 +49,11 @@ def items():
 
 
 it = items()
-# výběr: dva recepty (Ctrl + klik)
+# selection: two recipes (Ctrl + click)
 win.recipe_tree.setCurrentItem(it["web_a"]); it["web_b"].setSelected(True)
 print("označené:", [x.data(0, 257) for x in win._selected_recipe_items()])
 assert {x.data(0, 257) for x in win._selected_recipe_items()} == {"web_a", "web_b"}
-# výběr celé kategorie
+# selecting a whole category
 win.recipe_tree.setCurrentItem(it["Hlavní jídla"])
 print("kategorie:", sorted(x.data(0, 257) for x in win._selected_recipe_items()))
 assert sorted(x.data(0, 257) for x in win._selected_recipe_items()) == ["web_b", "web_c"]
@@ -61,7 +61,7 @@ assert sorted(x.data(0, 257) for x in win._selected_recipe_items()) == ["web_b",
 # ---- export
 win.recipe_tree.setCurrentItem(it["web_a"]); it["web_b"].setSelected(True)
 arch = g["EXPORT_DIR"] / "zaloha.7z"
-fakeqt.FD.path = str(arch.with_suffix(""))           # bez přípony – aplikace ji doplní
+fakeqt.FD.path = str(arch.with_suffix(""))           # without an extension – the app adds it
 win._export_backup()
 print("export:", fakeqt.msgs[-1])
 assert arch.exists() and fakeqt.msgs[-1][0] == "info"
@@ -72,7 +72,7 @@ assert "manifest.json" in names and f"web_assets/{font_rel}" in names and f"web_
 assert any(n.startswith("recipes/web_a_Kulajda/") for n in names) and not any("web_c" in n for n in names)
 assert g["backup_file_name"](["Guláš"]) == "Guláš.7z" and g["backup_file_name"](["a", "b"]).startswith("recepty_2_")
 
-# ---- „jiný počítač“: recepty, databáze a soubory karet pryč
+# ---- “another computer”: recipes, database and card files gone
 for f in R.iterdir():
     if f.name.startswith(("web_a", "web_b")):
         shutil.rmtree(f)
@@ -89,7 +89,7 @@ assert (R / "web_a_Kulajda" / "recipe_en.json").exists(), "překlady musí přij
 assert g["asset_lookup"](CSS_URL) == css_rel and g["asset_lookup"](FONT_URL) == font_rel and (WA / img_rel).read_bytes() == b"JPEG"
 assert json.loads((WA / "index.json").read_text(encoding="utf-8"))[FONT_URL]["file"] == font_rel
 
-# ---- znovu: Ne = ponechat současné, Ano = přepsat (stará verze do koše)
+# ---- again: No = keep the current ones, Yes = overwrite (old version to the trash)
 rj = R / "web_a_Kulajda" / "recipe.json"
 d = json.loads(rj.read_text(encoding="utf-8")); d["title"] = "Kulajda ZMĚNĚNÁ"; rj.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
 fakeqt.MB.answer = "no"; win._import_backup()
@@ -104,11 +104,11 @@ print("koš:", trash)
 assert any(n.startswith("web_a_Kulajda") for n in trash)
 assert sqlite3.connect(g["DB_PATH"]).execute("SELECT COUNT(*) FROM recipes WHERE recipe_id='web_a'").fetchone()[0] == 1
 
-# ---- podezřelý archiv (cesta mimo složku) se odmítne a nic se nerozbalí
+# ---- a suspicious archive (path outside the folder) is refused and nothing is unpacked
 bad = Path(tempfile.mkdtemp()) / "zly.7z"
 with py7zr.SevenZipFile(bad, "w") as z:
     z.writestr(b'{"format": "localchef-recipes"}', "manifest.json")
-    z.writestr(b"x", "skripty/zlo.bat")           # mimo manifest/recipes/web_assets (cesty s ../ py7zr ani nezapíše)
+    z.writestr(b"x", "skripty/zlo.bat")           # outside manifest/recipes/web_assets (py7zr does not even write paths with ../)
 st = g["stage_recipe_backups"]([str(bad)])
 print("podezřelý archiv:", st["errors"])
 assert st["errors"] and not st["items"]
@@ -116,7 +116,7 @@ shutil.rmtree(st["tmp"], ignore_errors=True)
 assert not (Path.cwd() / "zlo.txt").exists() and not (R.parent / "zlo.txt").exists()
 assert not g["_backup_name_ok"]("C:/x") and not g["_backup_name_ok"]("recipes/../x") and g["_backup_name_ok"]("recipes/r1/a.json")
 
-# ---- přejmenování datové složky (do 1.2 cookidoo_data)
+# ---- renaming the data folder (until 1.2 cookidoo_data)
 old_cwd = os.getcwd()
 t = Path(tempfile.mkdtemp()); os.chdir(t)
 (t / "cookidoo_data" / "recipes" / "r9_x").mkdir(parents=True)
@@ -127,10 +127,10 @@ new = g["_data_dir"]()
 fp = sqlite3.connect(new / "catalog.db").execute("SELECT folder_path FROM recipes").fetchone()[0]
 print("migrace:", new.name, "| stará zůstala:", (t / "cookidoo_data").exists(), "| cesta v DB:", fp)
 assert new.name == "localchef_data" and not (t / "cookidoo_data").exists() and Path(fp).exists() and "localchef_data" in fp
-assert g["_data_dir"]() == new                      # podruhé už nic nedělá
+assert g["_data_dir"]() == new                      # the second time it does nothing
 os.chdir(old_cwd)
 
-# ---- nainstalováno tam, kam nejde zapisovat (Program Files) → data do %LOCALAPPDATA%\LocalChef Studio
+# ---- installed where it cannot write (Program Files) → data into %LOCALAPPDATA%\LocalChef Studio
 la = Path(tempfile.mkdtemp())
 os.environ["LOCALAPPDATA"] = str(la)
 orig_w = g["_dir_writable"]

@@ -12,13 +12,13 @@ f = R / "r45604_apfel"; f.mkdir(parents=True)
 (f/"page_snapshot.html").write_text("<html><body><h2>Suroviny</h2><p>Apfelsaft</p><h2>Tipy</h2><p>Dazu passt Sahne.</p></body></html>", encoding="utf-8")
 g["init_db"]()
 win = g["LocalChefStudio"]()
-# --- jednotky překladu: <nobr> už větu nerozseká
+# --- translation units: <nobr> no longer cuts a sentence
 units = [u for tr, u in g["RecipeTranslator"]._units('Apfelsaft in den Mixtopf geben, <nobr>3 Sek./Stufe 5</nobr> verrühren und <nobr>5 Min./100°C/Stufe 2</nobr> aufkochen.') if tr]
 print("units:", units)
-# --- jazyk po větách
+# --- language per sentence
 for t in ["Suroviny", "Tipy", "Počet porcí", "Apfelsaft in den Mixtopf geben", "Dazu passt Sahne.", "4 portions"]:
     print(f"  {t!r} ->", g["detect_unit_lang"](t, "de"))
-# --- pořadí překladačů
+# --- order of translators
 calls = []
 g["HAS_DEEPL"] = True; g["load_api_key"] = lambda: "dk"; g["load_gemini_key"] = lambda: "gk"; g["has_argos"] = lambda: True
 g["_deepl_translate"] = lambda xs, t: (calls.append("deepl"), [f"D:{x}" for x in xs])[1]
@@ -31,7 +31,7 @@ print("order 2:", g["translate_strings"](["Hallo"], "en", "de"), calls)
 g["_gemini_translate"] = lambda *a: (calls.append("gemini-fail"), (_ for _ in ()).throw(RuntimeError("429")))[1]; calls.clear()
 print("order 3:", g["translate_strings"](["Hallo"], "en", "de"), calls)
 print("label:", (g["load_api_key"](), win._translator_label()))
-# --- překlad karty: české nadpisy z cs, německý text z de, do cs se české nepřekládají
+# --- card translation: Czech headings from cs, German text from de, Czech is not translated into cs
 g["_deepl_translate"] = lambda xs, t: [f"[{t}]{x}" for x in xs]
 sent = []
 orig_ts = g["translate_strings"]
@@ -44,7 +44,7 @@ d = json.loads((f/"recipe_en.json").read_text(encoding="utf-8")); print("EN step
 sent.clear(); g["generate_translated_files"](f, "cs", target_device="tm6")
 for x in sent: print("  sent cs:", x[0], "->", x[1], x[2][:4])
 print("CS card has Suroviny untouched:", "<h2>Suroviny</h2>" in (f/"page_snapshot_cs.html").read_text(encoding="utf-8"))
-# --- názvy podle UI
+# --- titles by UI
 print("title combo:", [i[0] for i in win.combo_title_lang._items], "| current:", win.combo_title_lang.currentData())
 def names():
     root = win.recipe_tree.invisibleRootItem(); return [root.child(i).child(j).text(0) for i in range(root.childCount()) for j in range(root.child(i).childCount())]
@@ -53,7 +53,7 @@ win._load_catalog(); print("UI cs:", names())
 win._change_ui_language(1); print("UI en:", names(), "| tooltip search:", win.search_input._tooltip[:40])
 win.combo_title_lang.setCurrentIndex(1); print("orig:", names())
 win.combo_title_lang.setCurrentIndex(0)
-# --- kontextové menu
+# --- context menu
 root = win.recipe_tree.invisibleRootItem(); item = root.child(0).child(0)
 captured = {}
 orig_menu = g["QMenu"]

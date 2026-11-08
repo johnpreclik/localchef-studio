@@ -1,4 +1,4 @@
-"""Verze 1.2: název LocalChef Studio, vestavěný návod CZ/EN (tlačítko ❓ i položka v ⚙️), adresa pro QR z proměnné prostředí."""
+"""Version 1.2: name LocalChef Studio, built-in guide CZ/EN (❓ button and an item in ⚙️), QR address from an environment variable."""
 import sys, os, re
 sys.path.insert(0, os.path.dirname(__file__))
 import fakeqt; fakeqt.install()
@@ -21,7 +21,7 @@ for lang in ("cs", "en"):
     assert "argostranslate" in h and "500" in h and "Docker" in h
     for i in range(len(titles)):
         assert f"href='#s{i}'" in h and f"name='s{i}'" in h
-    # vyvážené značky v HTML návodu
+    # balanced tags in the guide HTML
     for tag in ("ul", "ol", "li", "p", "b", "code", "a"):
         assert len(re.findall(f"<{tag}[ >]", h)) == h.count(f"</{tag}>"), (lang, tag)
 assert len(g["HOW_TO_GUIDE"]["cs"]) == len(g["HOW_TO_GUIDE"]["en"])
@@ -29,7 +29,7 @@ assert len(g["HOW_TO_GUIDE"]["cs"]) == len(g["HOW_TO_GUIDE"]["en"])
 dlg = g["HowToDialog"]("en", parent=win)
 print("okno návodu:", dlg.lang)
 dlg._set_lang("cs"); assert dlg.lang == "cs"
-win._show_how_to()                       # nesmí spadnout
+win._show_how_to()                       # must not crash
 print("tlačítko:", win.btn_help.text(), "| menu:", win.act_how_to.text())
 assert win.btn_help.text() == "❓ Návod" and win.act_how_to.text() == "❓ Návod k použití"
 print("EN:", g["tx"]("❓ Návod") if g.get("_UI_LANG") == "en" else g["EN_UI"]["❓ Návod"])

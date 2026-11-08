@@ -1,4 +1,4 @@
-# zjednodušený extruct jen pro testy (čte JSON-LD)
+# simplified extruct for tests only (reads JSON-LD)
 import json, re
 def extract(html, base_url=None, syntaxes=None, errors="ignore", uniform=False, **kw):
     out = {"json-ld": [], "microdata": [], "opengraph": [], "rdfa": []}

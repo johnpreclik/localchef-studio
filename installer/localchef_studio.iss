@@ -1,12 +1,12 @@
 ; Instalator LocalChef Studia (Inno Setup 6).
-; Sestaveni:  iscc /DAppVersion=1.5 installer\localchef_studio.iss
+; Sestaveni:  iscc /DAppVersion=1.6 installer\localchef_studio.iss
 ; Predpoklad: build_exe.bat uz vytvoril dist\LocalChefStudio (PyInstaller).
 ;
 ; Instaluje se pro aktualniho uzivatele do %LOCALAPPDATA%\Programs\LocalChef Studio (bez administratora).
 ; Aplikace tak muze mit data (localchef_data) vedle programu. Data se pri odinstalaci NEMAZOU.
 
 #ifndef AppVersion
-  #define AppVersion "1.5"
+  #define AppVersion "1.6"
 #endif
 #ifndef SourceDir
   #define SourceDir "..\dist\LocalChefStudio"
@@ -64,7 +64,15 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app
 
 [Run]
 Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; update from the app: a silent install with /relaunch=1 starts the app again afterwards
+Filename: "{app}\{#AppExe}"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser; Check: RelaunchAfterUpdate
 
 [UninstallDelete]
 ; jen docasne soubory programu – recepty, nastaveni a prihlaseni (localchef_data) zustanou
 Type: filesandordirs; Name: "{app}\__pycache__"
+
+[Code]
+function RelaunchAfterUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;

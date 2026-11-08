@@ -12,11 +12,11 @@ LocalChef Studio is a desktop app (Python, PyQt6) that keeps your recipes in an 
 
 ## Features
 
-- **Offline cookbook** – saves the extracted ingredients, steps and tips and a local snapshot of the recipe page for personal offline viewing; works without internet.
-- **Search** – one start page searches your cookbook and recipe websites, by name or by ingredient.
+- **Offline cookbook** – saves the recipe's ingredients, steps, tips, image, author and a link to its source and shows every recipe in one unified recipe card, whichever website it comes from; works without internet.
+- **Search** – one start page searches your cookbook and recipe websites, by name or by ingredient; foreign sites are searched in their own language (the search term is translated).
 - **Cooking player** – large time / temperature / speed dials, highlighted ingredients for the current step, batch scaling, metric conversion and detailed steps.
 - **Conversion between appliances** – each recipe gets a version for both supported appliance types (built-in rules, optionally AI via Gemini); recipes from other websites are converted by an offline assistant.
-- **Translations** – Czech and English via DeepL, Gemini or a fully offline translator (Argos Translate); the app offers to download it at start.
+- **Translations** – Czech and English via DeepL, Gemini or a fully offline translator (Argos Translate); the app downloads it at start by itself and shows the progress; a recipe already in the target language is not translated.
 - **PDF export** – a clean one-page recipe sheet.
 - **Backup** – export selected recipes into a single `.7z` and import one or more backups on any computer.
 - **Phone app over Wi-Fi** – open the cookbook in a phone or tablet browser via a QR code.
@@ -28,7 +28,7 @@ Documentation: [user guide](docs/LocalChef_Studio_user_guide_EN.md) ([PDF](docs/
 
 ```
 py -m pip install -r requirements.txt
-py localchef_studio_v1.5.py
+py localchef_studio_v1.6.py
 ```
 
 The version is part of the file name. All data are stored locally in `localchef_data` next to the program: recipes, settings, API keys and the built-in browser's session data. Data from an older version are taken over automatically. This folder is never committed (see `.gitignore`) and should not be shared – it contains your API keys.
@@ -37,18 +37,18 @@ The version is part of the file name. All data are stored locally in `localchef_
 
 The easiest way to get LocalChef Studio on Windows 10/11 – no Python needed.
 
-**[⬇️ Download LocalChef_Studio_1.5.exe](https://github.com/johnpreclik/localchef-studio/releases/latest/download/LocalChef_Studio_1.5.exe)** (about 280 MB) · [all files of the latest release](https://github.com/johnpreclik/localchef-studio/releases/latest)
+**[⬇️ Download LocalChef_Studio_1.6.exe](https://github.com/johnpreclik/localchef-studio/releases/latest/download/LocalChef_Studio_1.6.exe)** (about 280 MB) · [all files of the latest release](https://github.com/johnpreclik/localchef-studio/releases/latest)
 
-It is a standard installer with a Start menu shortcut (optionally a desktop one) and an uninstaller. It installs for the current user into `%LOCALAPPDATA%\Programs\LocalChef Studio` (no administrator). The installer is not code-signed, so SmartScreen may ask: *More info → Run anyway*. Recipes and settings (`localchef_data`) survive updates and are not deleted on uninstall.
+It is a standard installer with a Start menu shortcut (optionally a desktop one) and an uninstaller. It installs for the current user into `%LOCALAPPDATA%\Programs\LocalChef Studio` (no administrator). The installer is not code-signed, so SmartScreen may ask: *More info → Run anyway*. Recipes and settings (`localchef_data`) survive updates and are not deleted on uninstall. At start the app checks GitHub for a new version and, if you agree, downloads and installs it by itself (⚙️ Settings → 🔄 Check for updates).
 
-Each release also has **LocalChef_Studio_1.5_python.zip** (run from Python or build your own .exe) and **LocalChef_Studio_1.5_docker.zip** (Docker files).
+Each release also has **LocalChef_Studio_1.6_python.zip** (run from Python or build your own .exe) and **LocalChef_Studio_1.6_docker.zip** (Docker files).
 
 ## Build a Windows .exe
 
 Run `build_exe.bat` – it creates `dist\LocalChefStudio\LocalChefStudio.exe` with all libraries (1–2 GB because of the offline translator). The installer is then built with [Inno Setup](https://jrsoftware.org/isinfo.php):
 
 ```
-iscc /DAppVersion=1.5 installer\localchef_studio.iss
+iscc /DAppVersion=1.6 installer\localchef_studio.iss
 ```
 
 The [Windows installer](.github/workflows/windows-installer.yml) workflow can do the same on GitHub (started by hand): it runs `build_exe.bat`, starts the program, builds the installer, test-installs and uninstalls it and can publish a GitHub release.
@@ -73,7 +73,7 @@ Then open http://localhost:6080/ in a browser.
 - Add `--build-arg WITH_ARGOS=0` to `docker build` to leave out the offline translator (the image is about 2 GB smaller).
 - Recipes and settings are kept in `~/localchef_data`.
 - Update: run `docker build` again, then `docker rm -f localchef` and the same `docker run`. Data stay in place.
-- Without internet access to GitHub: unpack `LocalChef_Studio_1.5_docker.zip` from Releases and run `docker build -t localchef-studio -f docker/Dockerfile .` inside it.
+- Without internet access to GitHub: unpack `LocalChef_Studio_1.6_docker.zip` from Releases and run `docker build -t localchef-studio -f docker/Dockerfile .` inside it.
 - Use `sudo` before `docker` if your user is not in the `docker` group.
 
 ### NAS, e.g. TrueNAS SCALE 24.10+

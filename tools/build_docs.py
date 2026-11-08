@@ -1,15 +1,15 @@
-"""Vyrobí PDF dokumentace z Markdownu v docs/ (stejně jako PDF export v aplikaci: Qt QTextDocument + QPdfWriter).
+"""Builds the documentation PDFs from the Markdown in docs/ (like the PDF export in the app: Qt QTextDocument + QPdfWriter).
 
-Použití:  python tools/build_docs.py            (všechny docs/*.md → docs/*.pdf)
-          python tools/build_docs.py soubor.md  (jen vybrané)
-Okno se neotevírá (Qt běží mimo obrazovku). Potřebuje PyQt6.
+Usage:  python tools/build_docs.py            (all docs/*.md → docs/*.pdf)
+        python tools/build_docs.py file.md    (only the given ones)
+No window opens (Qt runs off screen). Needs PyQt6.
 """
 import os
 import re
 import sys
 from pathlib import Path
 
-if sys.platform != "win32":                      # na Windows by 'offscreen' nenačetl písma (prázdné PDF)
+if sys.platform != "win32":                      # on Windows 'offscreen' would not load fonts (empty PDF)
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt6.QtCore import QMarginsF, QSizeF                     # noqa: E402
 from PyQt6.QtGui import QFont, QPageLayout, QPageSize, QPdfWriter, QTextDocument  # noqa: E402
@@ -47,7 +47,7 @@ def build(md_path: Path) -> Path:
     writer.setResolution(110)
     writer.setTitle(title)
     writer.setCreator("LocalChef Studio – tools/build_docs.py")
-    doc2.print(writer)                       # QTextDocument sám přidá čísla stránek
+    doc2.print(writer)                       # QTextDocument adds page numbers itself
     del writer
     return out
 

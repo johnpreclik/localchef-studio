@@ -1,6 +1,6 @@
 # LocalChef Studio – Documentation
 
-Version 1.5 · offline cookbook and kitchen robot cooking guide
+Version 1.6 · offline cookbook and kitchen robot cooking guide
 
 LocalChef Studio is an independent project. It is not affiliated with, endorsed by, or connected to Vorwerk (Thermomix / Cookidoo) or Lidl (Monsieur Cuisine). Their names are used in this documentation only to describe compatibility and are trademarks of their respective owners.
 
@@ -10,8 +10,8 @@ LocalChef Studio saves recipes from recipe websites into your own offline cookbo
 
 Main features at a glance:
 
-- **Offline cookbook** – a recipe is saved with its ingredients and steps and a local snapshot of the page (recipe card) for personal offline viewing.
-- **Compatible websites** – recipes for Thermomix TM6 (Cookidoo), Monsieur Cuisine Smart (monsieur-cuisine.com) and hundreds of other recipe sites (Prima FRESH, Chefkoch, Allrecipes, BBC Good Food…).
+- **Offline cookbook** – a recipe is saved with its ingredients and steps and is shown in the app's own recipe card (image, author, a link to the source, ingredients, method, nutrition, tips), also offline.
+- **Compatible websites** – recipes for Thermomix TM6 (Cookidoo), Monsieur Cuisine Smart (monsieur-cuisine.com) and hundreds of other recipe sites (Prima FRESH, Allrecipes, BBC Good Food…).
 - **Search** – the 🏠 Home start page searches your cookbook and websites, by name or ingredient.
 - **Two robots** – every recipe has a version for Thermomix TM6 and Monsieur Cuisine Smart (MCS); the second one is created by automatic conversion. Recipes from other sites are converted by the offline assistant.
 - **Recipe player** – large dials with time, temperature and speed, highlighted ingredients for the current step, batch and unit conversion, detailed steps.
@@ -21,7 +21,7 @@ Main features at a glance:
 - **Phone** – the computer acts as a server; recipes open in the phone's browser over home Wi-Fi.
 - **Built-in guide** – the ❓ How to use button (Czech and English).
 
-The app is a single file `localchef_studio_v1.5.py` (the version is in the name). It runs as a Python script (chapter 2), as a stand-alone `LocalChefStudio.exe` without Python (chapter 3), or in Docker, for example on a NAS (chapter 4). The interface is in Czech or English.
+The app is a single file `localchef_studio_v1.6.py` (the version is in the name). It runs as a Python script (chapter 2), as a stand-alone `LocalChefStudio.exe` without Python (chapter 3), or in Docker, for example on a NAS (chapter 4). The interface is in Czech or English.
 
 **Platform:** the app is written primarily for **Windows 10/11**, where it is developed and tested. The Docker version is experimental and has not been tested in everyday use.
 
@@ -29,7 +29,7 @@ Recipes are saved through the built-in browser. Everything else works with the d
 
 ### Installing with the installer (easiest)
 
-Download **LocalChef_Studio_1.5.exe** from the Releases page (https://github.com/johnpreclik/localchef-studio/releases/latest) and run it. The installer (Czech or English) installs the app for the current user into `%LOCALAPPDATA%\Programs\LocalChef Studio`, without administrator rights, adds a Start menu shortcut (optionally a desktop one) and an uninstaller in Windows Settings. The installer is not code-signed, so SmartScreen may ask: "More info → Run anyway". Data (`localchef_data`) live next to the program; updates keep them and uninstalling does not delete them. If the app is installed where it cannot write (Program Files), it uses `%LOCALAPPDATA%\LocalChef Studio\localchef_data`.
+Download **LocalChef_Studio_1.6.exe** from the Releases page (https://github.com/johnpreclik/localchef-studio/releases/latest) and run it. The installer (Czech or English) installs the app for the current user into `%LOCALAPPDATA%\Programs\LocalChef Studio`, without administrator rights, adds a Start menu shortcut (optionally a desktop one) and an uninstaller in Windows Settings. The installer is not code-signed, so SmartScreen may ask: "More info → Run anyway". Data (`localchef_data`) live next to the program; updates keep them and uninstalling does not delete them. If the app is installed where it cannot write (Program Files), it uses `%LOCALAPPDATA%\LocalChef Studio\localchef_data`.
 
 ## 2. Requirements and installation (running the .py)
 
@@ -56,7 +56,7 @@ py -m pip install -r requirements.txt
 Start:
 
 ```
-py localchef_studio_v1.5.py
+py localchef_studio_v1.6.py
 ```
 
 Start it from the folder where the data should live: `localchef_data` is created in the current command-line folder. On first start Windows may ask about network access – allow it for private networks, otherwise the phone app won't work (chapter 15).
@@ -67,7 +67,7 @@ Start it from the folder where the data should live: `localchef_data` is created
 
 `build_exe.bat` builds `LocalChefStudio.exe`, which runs on Windows without Python. It includes everything: the built-in browser, the offline translator and backups. Build it once on a computer with Python.
 
-1. Put `localchef_studio_v1.5.py` and `build_exe.bat` in the same folder (the script finds the versioned file itself).
+1. Put `localchef_studio_v1.6.py` and `build_exe.bat` in the same folder (the script finds the versioned file itself).
 2. Double-click `build_exe.bat`. It installs PyInstaller and the libraries and builds the program in "folder" mode.
 3. The finished program is in `dist\LocalChefStudio`.
 
@@ -92,7 +92,7 @@ docker build -t localchef-studio -f docker/Dockerfile https://github.com/johnpre
 docker run -d --name localchef --restart unless-stopped --shm-size=1g -p 6080:6080 -p 3665:3665 -e LOCALCHEF_LAN_HOST=YOUR_PC_IP -e VNC_PASSWORD=password -v "$HOME/localchef_data:/data/localchef_data" localchef-studio
 ```
 
-Then open http://localhost:6080/. `YOUR_PC_IP` is the computer's address on your network (for the phone QR code). `--build-arg WITH_ARGOS=0` in `docker build` leaves out the offline translator. Use `sudo` before `docker` if your user is not in the `docker` group. Without access to GitHub, unpack `LocalChef_Studio_1.5_docker.zip` from Releases and run `docker build -t localchef-studio -f docker/Dockerfile .` inside it.
+Then open http://localhost:6080/. `YOUR_PC_IP` is the computer's address on your network (for the phone QR code). `--build-arg WITH_ARGOS=0` in `docker build` leaves out the offline translator. Use `sudo` before `docker` if your user is not in the `docker` group. Without access to GitHub, unpack `LocalChef_Studio_1.6_docker.zip` from Releases and run `docker build -t localchef-studio -f docker/Dockerfile .` inside it.
 
 **NAS (e.g. TrueNAS SCALE 24.10 and newer):** the same build from GitHub, in the NAS shell (TrueNAS: System → Shell):
 
@@ -147,23 +147,30 @@ View: 📄 Recipe card / 🍲 Thermomix Mode (TM6) / 🤖 Monsieur Cuisine Smart
 |---|---|
 | Translation | 🌍 Translate all recipes, ✨ Gemini AI Key, 📥 Download offline translator, 🔑 DeepL |
 | Appearance | app language (Czech / English), dark / light mode, icon style (🟢/🔵 or 🍲/🤖) |
-| App | ❓ How to use, ℹ️ What's new and terms of use |
+| App | ❓ How to use, ℹ️ What's new and terms of use, 🔄 Check for updates |
 
 ### First start step by step
 
 1. Start the app (chapter 2, 3 or 4). It creates an empty cookbook.
 2. The **What's new and terms of use** window appears. OK unlocks after you scroll to the end.
-3. The app checks the **offline translator**. If it is missing, it offers to download it (YES / NO) with a "Don't ask again" option. You can download it any time in ⚙️ → 📥 Download offline translator.
-4. Click 🏠 Home, find a recipe and save it with ⬇️ SAVE RECIPE. For Cookidoo, log in first (chapter 7).
-5. Optionally enter Gemini or DeepL keys (chapter 14).
+3. The app checks the **offline translator**. If it is missing, it downloads it by itself and shows the progress in percent in a window (chapter 13).
+4. Then it checks whether a **new version** is on GitHub. If so, it asks: *A new version is available on GitHub – download and install it?* After **YES** the installer is downloaded (its size and the SHA-256 checksum from GitHub are checked), the app closes, the new version is installed silently into the same folder and starts again. Recipes and settings (`localchef_data`) stay. **Skip this version** turns the question off for that version; you can check by hand in ⚙️ → 🔄 Check for updates. When running from Python the app only offers the download page; in Docker it does not look for new versions.
+5. Click 🏠 Home, find a recipe and save it with ⬇️ SAVE RECIPE. For Cookidoo, log in first (chapter 7).
+6. Optionally enter Gemini or DeepL keys (chapter 14).
 
 ## 6. Recipe search (🏠 Home)
 
-The start page searches **your cookbook** and **recipe websites** at the same time: Cookidoo, Monsieur Cuisine, Prima FRESH, Chefkoch, Allrecipes and BBC Good Food, by **name** or by **ingredient**.
+The start page searches **your cookbook** and **recipe websites** at the same time: Cookidoo, Monsieur Cuisine, Prima FRESH, Allrecipes and BBC Good Food, by **name** or by **ingredient**.
 
 - Web results are grouped by source, with a picture and a link. A click opens the recipe in the built-in browser, where you save it.
 - When a site finds nothing and shows "popular recipes" instead, the app ignores them.
 - In name search, results containing the search word come first (the word stem is compared without accents).
+- **Search term translation:** each site has its language. English sites (Allrecipes, BBC Good Food) get a Czech term translated into English ("zelňačka" → "sauerkraut soup"), Czech sites get an English term in Czech. A site in another language (e.g. a German site added to `search_sources`) gets the term as typed first and, if it finds nothing, the English translation. The site then shows "🌍 searched as …".
+- The term's language is recognised by accents and a dictionary; otherwise the interface language applies. Czech dishes (zelňačka, svíčková, kulajda…) come from a built-in dictionary, the rest is translated by DeepL, Gemini or the offline translator. Translated terms are remembered in `search_translations.json`.
+- A term whose language cannot be told ("spaghetti") is searched as typed first and translated only when nothing is found. Likewise, when a Czech site finds nothing, the term translated from English is tried (and the other way round).
+- When a site refuses automatic search (bot protection, HTTP 403/429), the site shows "the website refused automatic search" and the app does not ask it again for an hour. The link to the search on the website stays.
+- Chefkoch was removed in version 1.6: it refuses embedded browsers (HTTP 403), so neither searching nor saving worked there.
+- The search bar stays at the top while you scroll through the results.
 - The same search works from the phone (chapter 15); the computer does the searching.
 - The list of sites can be extended in `config.json` (`search_sources`).
 
@@ -191,7 +198,7 @@ Saving the same recipe again replaces it with a fresh version and removes its ol
 
 ### Other sites
 
-Save recipes from other sites the same way (find them via 🏠 Home, for example). The app keeps **only the recipe**: ingredients, method and tips separately. The recipe card is cleaned of menus, ads, related articles and comments; the recipe's author stays. Video-only pages cannot be saved.
+Save recipes from other sites the same way (find them via 🏠 Home, for example). The app keeps **only the recipe**: ingredients, method and tips separately. The author, image and a link to the source are kept too. A new recipe is offered into its website's category (Cookidoo, Prima FRESH, Allrecipes…). Video-only pages cannot be saved.
 
 ### What is saved
 
@@ -214,7 +221,7 @@ For other sites the recipe-scrapers library helps too. What the app used is reco
 
 ## 9. Categories and organising the cookbook
 
-Each recipe belongs to one category. Default categories: Uncategorized, Monsieur Cuisine, Main dishes, Soups, Baking & Desserts, Sauces, Foreign-language. Create your own by typing a new name or with ➕ New category. They are stored in Czech; the English interface only shows the English name.
+Each recipe belongs to one category. Default categories: Uncategorized, Breakfast, Snacks, Starters, Soups, Salads, Lunches, Dinners, Main dishes, Side dishes, Sauces, Spreads & dips, Bread & pastry, Sweets & desserts, Drinks, Non-alcoholic cocktails, Cocktails, Preserving. A new recipe is offered into its website's category (Cookidoo, Monsieur Cuisine, Prima FRESH, Allrecipes, BBC Good Food, other sites by their address) and every website has its own coloured icon in the list. Create your own by typing a new name or with ➕ New category. They are stored in Czech; the English interface only shows the English name.
 
 - **Change category:** 🏷️ Change category…, right-click → 🏷️ Move to category, or drag and drop onto another category.
 - **Favourites:** ⭐ marks a recipe; favourites are at the top of their category, the ⭐ Favourites filter shows only them.
@@ -223,7 +230,7 @@ Each recipe belongs to one category. Default categories: Uncategorized, Monsieur
 
 ## 10. Viewing and cooking
 
-**📄 Recipe card** shows the recipe as it looked on the website, even offline. In dark mode the card is darkened; pictures keep their colours.
+**📄 Recipe card** shows the recipe in the app's own design, whichever website it comes from: image, title, author, a link to the source (website badge), description, servings and time, ingredients, method, nutrition and tips. It works offline and follows the light and dark look. A switch on the card shows the steps for 🍲 Thermomix TM6 or 🤖 Monsieur Cuisine (for other websites also the original steps) with setting chips (⏱ time, 🌡 temperature, 🌀 speed). Units are converted to metric (the original in brackets) and to the chosen batch. All recipes saved before work the same – nothing is converted; when no ingredients or method could be extracted, the saved page is shown. The phone shows the same card.
 
 **🍲 Thermomix Mode (TM6)** and **🤖 Monsieur Cuisine Smart (MCS)** open the player for that robot. A recipe from another source is shown in its converted version (chapter 12).
 
@@ -281,13 +288,13 @@ Recipes and cards can be translated into Czech or English in the recipe bar (�
 | 2 | Gemini (Google AI) | a Gemini key is set | yes |
 | 3 | Argos Translate (offline) | installed with language models | only to download models |
 
-If one translator fails (quota, outage), the app tries the next one. Translation works sentence by sentence with a memory (`translation_cache.json`), so the TM6 and MCS versions, detailed steps and the card share translations. A recipe written in Czech is not translated into Czech.
+If one translator fails (quota, outage), the app tries the next one. Translation works sentence by sentence with a memory (`translation_cache.json`), so the TM6 and MCS versions, detailed steps and the card share translations. The recipe's language is recognised from its text (a language tag from the page only counts when the text agrees). A recipe that is already in the target language is not translated – it is just shown, even without a translator or keys. Translation and bulk translation run in the background; you can keep using the app meanwhile.
 
 ### Offline translator (Argos Translate)
 
 Translates on your computer, without a key and without internet. It needs language models, downloaded once (tens to hundreds of MB each).
 
-- **At start** the app checks whether the translator is installed and has models. If not, it asks **YES / NO**; ticking **Don't ask again** turns the question off.
+- **At start** the app checks whether the translator is installed and has models. If not, it **downloads it by itself** and shows the progress in percent in a window (from Python it first installs the library with pip – no percentage there). **Hide** closes the window while the download continues, **Cancel** stops it, **Don't download automatically next time** turns automatic downloading off.
 - Download it any time in **⚙️ → 📥 Download offline translator**. When running from Python the app can also install the `argostranslate` library; the exe includes it.
 - It runs in a separate process, so even a crash won't take the app down; the first translation after start takes a moment (loading models).
 - Models are stored in the user profile (.py) or in `localchef_data\argos_packages` (exe).
@@ -373,7 +380,7 @@ The first place to look is `localchef_data/app.log`. An unexpected error does no
 | A Cookidoo recipe has no steps | not logged in or the page did not load | log in, wait for the page and save again |
 | "Recipe not recognised" | the site has no recipe in a known form | try the same recipe from another site, install `recipe-scrapers` |
 | Odd or missing steps | an older save | save the recipe again |
-| Web search finds nothing | the site doesn't know the word (e.g. a Czech word on Chefkoch) | try another word or ingredient search |
+| Web search finds nothing | the site doesn't know the word (e.g. a Czech dish on an English site) | try another word or ingredient search |
 | Translation: quota (HTTP 429) | Gemini limit reached | wait, or let DeepL / offline translate |
 | Translation: language model missing | the offline translator lacks the language | ⚙️ → 📥 Download offline translator |
 | The phone cannot connect | firewall or another network | allow port 3665, check it is the same Wi-Fi |
