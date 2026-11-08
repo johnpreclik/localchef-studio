@@ -5552,7 +5552,7 @@ WHATS_NEW = {
             "nese vlastní jméno bez cizích ochranných známek. Datová složka se jmenuje localchef_data; data ze starší verze "
             "se při prvním startu převezmou samy – recepty, nastavení i přihlášení zůstávají.",
             "📦 Záloha receptů: označ recepty (Ctrl/Shift + klik, nebo celou kategorii), pravé tlačítko → Exportovat zálohu. "
-            "Uloží se do jednoho souboru .7z ve složce exported_recipes – i s překlady, převody a kartou 1:1.",
+            "Uloží se do jednoho souboru .7z ve složce exported_recipes – i s překlady, převody a kartou receptu.",
             "📥 Import receptů: tlačítko vlevo nahraje jednu nebo víc záloh .7z najednou, už není potřeba kopírovat složky. "
             "Recepty, které už máš, můžeš přepsat (stará verze jde do koše), nebo ponechat.",
             "❓ Vestavěný návod k použití (česky i anglicky): co kde je, jak funguje offline překlad a proč a jak zdarma "
@@ -5560,7 +5560,7 @@ WHATS_NEW = {
             "🔎 Hledání na webech už neukazuje nesouvisející recepty: když web nic nenajde a nabídne „populární recepty“, "
             "aplikace je nebere. Výsledky s hledaným slovem jsou první.",
             "🧹 Recepty z ostatních webů (třeba Prima FRESH) se ukládají bez balastu: jen skutečné kroky, tipy zvlášť a karta "
-            "1:1 očištěná od reklam a článků, autor receptu zůstává.",
+            "receptu očištěná od reklam a článků, autor receptu zůstává.",
             "🤖 Komunitní recepty Monsieur Cuisine mají čisté kroky „Název: postup“ a správně načtenou teplotu (℃) i rychlost.",
             "◀ Tlačítko Zpět je teď první, 🏠 Domů hned za ním.",
             "🐳 Docker verze (build_docker.bat) – aplikace v prohlížeči na http://localhost:6080/.",
@@ -5570,7 +5570,7 @@ WHATS_NEW = {
             "has its own name without other companies' trademarks. The data folder is now localchef_data; data from an older version "
             "are taken over automatically on first start – recipes, settings and logins stay.",
             "📦 Recipe backup: select recipes (Ctrl/Shift + click, or a whole category), right-click → Export backup. They are "
-            "saved into one .7z file in the exported_recipes folder – with translations, conversions and the 1:1 card.",
+            "saved into one .7z file in the exported_recipes folder – with translations, conversions and the recipe card.",
             "📥 Recipe import: the button on the left loads one or more .7z backups at once – no more copying folders. Recipes you "
             "already have can be replaced (the old version goes to the trash) or kept.",
             "❓ Built-in user guide (Czech and English): what is where, how offline translation works and why and how to get "
@@ -5578,7 +5578,7 @@ WHATS_NEW = {
             "🔎 Web search no longer shows unrelated recipes: when a site finds nothing and offers “popular recipes”, the app "
             "ignores them. Results containing the search word come first.",
             "🧹 Recipes from other sites (e.g. Prima FRESH) are saved without clutter: only real steps, tips kept separately "
-            "and a 1:1 card cleaned of ads and articles, with the recipe's author kept.",
+            "and a recipe card cleaned of ads and articles, with the recipe's author kept.",
             "🤖 Monsieur Cuisine community recipes get clean “Name: method” steps and correctly read temperature (℃) and speed.",
             "◀ The Back button now comes first, 🏠 Home right after it.",
             "🐳 Docker version (build_docker.bat) – the app in your browser at http://localhost:6080/.",
@@ -5603,7 +5603,7 @@ WHATS_NEW = {
             "První očíslovaná verze aplikace.",
             "Ukládání receptů z Cookidoo (Thermomix) a Monsieur Cuisine do offline kuchařky.",
             "Režim vaření krok po kroku pro TM6 i Monsieur Cuisine, s jemnými kroky a automatickým převodem mezi stroji.",
-            "Karta 1:1 – uložená stránka receptu funguje i bez internetu; styly a obrázky se ukládají jen jednou.",
+            "Karta receptu – uložená stránka receptu funguje i bez internetu; styly a obrázky se ukládají jen jednou.",
             "Překlad receptů do češtiny a angličtiny: DeepL → Gemini → offline překladač; hromadný překlad celé kuchařky.",
             "Správné jednotky v překladu (lžička, lžíce, balíček…) a jednotné nastavení stroje (rychlost, sek, °C).",
             "Chytřejší zvýraznění surovin v kroku – i když se surovina v receptu opakuje nebo se použije jen část.",
@@ -5616,7 +5616,7 @@ WHATS_NEW = {
             "First numbered version of the app.",
             "Save recipes from Cookidoo (Thermomix) and Monsieur Cuisine into an offline cookbook.",
             "Step-by-step cooking mode for TM6 and Monsieur Cuisine, with detailed steps and automatic conversion between machines.",
-            "Card 1:1 – the saved recipe page works offline; styles and images are stored only once.",
+            "Recipe card – the saved recipe page works offline; styles and images are stored only once.",
             "Recipe translation into Czech and English: DeepL → Gemini → offline translator; bulk translation of the whole cookbook.",
             "Correct units in translations (tsp, tbsp, pack…) and consistent machine settings (speed, sec, °C).",
             "Smarter ingredient highlighting in each step – even when an ingredient repeats or only part of it is used.",
